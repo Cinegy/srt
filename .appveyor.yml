@@ -7,17 +7,16 @@ configuration:
 
 image:
   - Visual Studio 2015
-  - Visual Studio 2013
+#  - Visual Studio 2013
 
 platform:
-  - x64
+ # - x64
   - x86
 
 build_script:
   # build pthread
   - git clone https://github.com/GerHobbelt/pthread-win32.git C:/pthread-src
   - ps: "if ( $Env:APPVEYOR_BUILD_WORKER_IMAGE -eq 'Visual Studio 2013' ) { $VS_VERSION='2013' } else { $VS_VERSION='2015' }"
-  - ps: "if ( $Env:PLATFORM -eq 'x64' ) { $CMAKE_PLATFORM='Win64' } else { $CMAKE_PLATFORM='' }"
   - ps: "msbuild C:/pthread-src/pthread.${VS_VERSION}.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=x64"
   - ps: mkdir C:/pthread-win32
   - ps: mkdir C:/pthread-win32/include
@@ -25,7 +24,10 @@ build_script:
   - ps: cp C:/pthread-src/*.h C:/pthread-win32/include
   - ps: cp C:/pthread-src/bin/x64_MSVC${VS_VERSION}.${Env:CONFIGURATION}/pthread_lib.lib C:/pthread-win32/lib
   # build SRT
-  - ps: if ( $VS_VERSION -eq "2013" ) { $CMAKE_GENERATOR = "Visual Studio 12 2013 $CMAKE_PLATFORM)" } else { $CMAKE_GENERATOR = "Visual Studio 14 2015 $CMAKE_PLATFORM" }
+  - ps: if ( $VS_VERSION -eq '2013' -and $Env:PLATFORM -eq 'x86' ) { $CMAKE_GENERATOR = 'Visual Studio 12 2013' }
+  - ps: if ( $VS_VERSION -eq '2013' -and $Env:PLATFORM -eq 'x64' ) { $CMAKE_GENERATOR = 'Visual Studio 12 2013 Win64' }
+  - ps: if ( $VS_VERSION -eq '2015' -and $Env:PLATFORM -eq 'x86' ) { $CMAKE_GENERATOR = 'Visual Studio 14 2015' }
+  - ps: if ( $VS_VERSION -eq '2015' -and $Env:PLATFORM -eq 'x64' ) { $CMAKE_GENERATOR = 'Visual Studio 14 2015 Win64' }
   - ps: if ( $VS_VERSION -eq "2013" ) { $ENABLE_UNITTESTS = "OFF" } else { $ENABLE_UNITTESTS = "ON" }
   - ps: cmake . -G"$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=$Env:CONFIGURATION -DENABLE_UNITTESTS="$ENABLE_UNITTESTS"
   - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$($Env:PLATFORM)
