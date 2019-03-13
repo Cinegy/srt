@@ -19,7 +19,7 @@
 #include <iterator>
 #include <map>
 #include <srt.h>
-#if !defined(WIN32)
+#if !defined(_WIN32)
 #include <sys/ioctl.h>
 #endif
 
@@ -442,23 +442,20 @@ int SrtCommon::ConfigurePost(SRTSOCKET sock)
             return srt_setsockopt(sock, 0, SRTO_RCVTIMEO, &m_timeout, sizeof m_timeout);
     }
 
-    SrtConfigurePost(sock, m_options);
+    // host is only checked for emptiness and depending on that the connection mode is selected.
+    // Here we are not exactly interested with that information.
+    vector<string> failures;
 
-    for (auto o: srt_options)
+    SrtConfigurePost(sock, m_options, &failures);
+
+
+    if (!failures.empty())
     {
-        if ( o.binding == SocketOption::POST && m_options.count(o.name) )
+        if (Verbose::on)
         {
-            string value = m_options.at(o.name);
-            bool ok = o.apply<SocketOption::SRT>(sock, value);
-            if (Verbose::on)
-            {
-                string dir_name = DirectionName(m_direction);
-
-                if ( !ok )
-                    Verb() << "WARNING: failed to set '" << o.name << "' (post, " << dir_name << ") to " << value;
-                else
-                    Verb() << "NOTE: SRT/post::" << o.name << "=" << value;
-            }
+            Verb() << "WARNING: failed to set options: ";
+            copy(failures.begin(), failures.end(), ostream_iterator<string>(*Verbose::cverb, ", "));
+            Verb();
         }
     }
 
@@ -498,7 +495,7 @@ int SrtCommon::ConfigurePre(SRTSOCKET sock)
         if (Verbose::on )
         {
             Verb() << "WARNING: failed to set options: ";
-            copy(failures.begin(), failures.end(), ostream_iterator<string>(cout, ", "));
+            copy(failures.begin(), failures.end(), ostream_iterator<string>(*Verbose::cverb, ", "));
             Verb();
         }
 
@@ -729,16 +726,24 @@ bytevector SrtSource::Read(size_t chunk)
     if ( chunk < data.size() )
         data.resize(chunk);
 
-    CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, true);
-    if ( transmit_bw_report && int(counter % transmit_bw_report) == transmit_bw_report - 1 )
-    {
-        Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
-    }
+    const bool need_bw_report    = transmit_bw_report    && int(counter % transmit_bw_report) == transmit_bw_report - 1;
+    const bool need_stats_report = transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1;
 
-    if ( transmit_stats_report && counter % transmit_stats_report == transmit_stats_report - 1)
+    CBytePerfMon perf;
+    if (need_stats_report || need_bw_report)
     {
-        PrintSrtStats(m_sock, perf);
+        // clear only if stats report is to be read
+        srt_bstats(m_sock, &perf, need_stats_report /* clear */);
+
+        if (need_bw_report)
+        {
+            Verb() << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth;
+        }
+
+        if (need_stats_report)
+        {
+            PrintSrtStats(m_sock, perf);
+        }
     }
 
     ++counter;
@@ -802,7 +807,7 @@ SrtModel::SrtModel(string host, int port, map<string,string> par)
         is_caller = true;
     else if (m_mode == "rendezvous")
         is_rend = true;
-    else
+    else if (m_mode != "listener")
         throw std::invalid_argument("Wrong 'mode' attribute; expected: caller, listener, rendezvous");
 
     m_host = host;
@@ -1025,7 +1030,7 @@ protected:
             ip_mreq mreq;
             mreq.imr_multiaddr.s_addr = sadr.sin_addr.s_addr;
             mreq.imr_interface.s_addr = maddr.sin_addr.s_addr;
-#ifdef WIN32
+#ifdef _WIN32
             const char* mreq_arg = (const char*)&mreq;
             const auto status_error = SOCKET_ERROR;
 #else
@@ -1033,7 +1038,7 @@ protected:
             const auto status_error = -1;
 #endif
 
-#if defined(WIN32) || defined(__CYGWIN__)
+#if defined(_WIN32) || defined(__CYGWIN__)
             // On Windows it somehow doesn't work when bind()
             // is called with multicast address. Write the address
             // that designates the network device here.
@@ -1104,7 +1109,7 @@ protected:
 
     ~UdpCommon()
     {
-#ifdef WIN32
+#ifdef _WIN32
         if (m_sock != -1)
         {
             shutdown(m_sock, SD_BOTH);

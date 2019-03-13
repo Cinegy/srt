@@ -18,8 +18,11 @@
 #include <iterator>
 #include <map>
 #include <srt.h>
-#if !defined(WIN32)
+#if !defined(_WIN32)
 #include <sys/ioctl.h>
+#else
+#include <fcntl.h> 
+#include <io.h>
 #endif
 
 #include "netinet_any.h"
@@ -37,6 +40,7 @@ bool clear_stats = false;
 unsigned long transmit_bw_report = 0;
 unsigned long transmit_stats_report = 0;
 unsigned long transmit_chunk_size = SRT_LIVE_DEF_PLSIZE;
+bool printformat_json = false;
 
 class FileSource: public Source
 {
@@ -101,19 +105,76 @@ Iface* CreateFile(const string& name) { return new typename File<Iface>::type (n
 
 
 template <class PerfMonType>
-void PrintSrtStats(int sid, const PerfMonType& mon)
+static void PrintSrtStats(int sid, const PerfMonType& mon)
 {
-    cerr << "======= SRT STATS: sid=" << sid << endl;
-    cerr << "PACKETS     SENT: " << setw(11) << mon.pktSent            << "  RECEIVED:   " << setw(11) << mon.pktRecv              << endl;
-    cerr << "LOST PKT    SENT: " << setw(11) << mon.pktSndLoss         << "  RECEIVED:   " << setw(11) << mon.pktRcvLoss           << endl;
-    cerr << "REXMIT      SENT: " << setw(11) << mon.pktRetrans         << "  RECEIVED:   " << setw(11) << mon.pktRcvRetrans        << endl;
-    cerr << "DROP PKT    SENT: " << setw(11) << mon.pktSndDrop         << "  RECEIVED:   " << setw(11) << mon.pktRcvDrop           << endl;
-    cerr << "RATE     SENDING: " << setw(11) << mon.mbpsSendRate       << "  RECEIVING:  " << setw(11) << mon.mbpsRecvRate         << endl;
-    cerr << "BELATED RECEIVED: " << setw(11) << mon.pktRcvBelated      << "  AVG TIME:   " << setw(11) << mon.pktRcvAvgBelatedTime << endl;
-    cerr << "REORDER DISTANCE: " << setw(11) << mon.pktReorderDistance << endl;
-    cerr << "WINDOW      FLOW: " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
-    cerr << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
-    cerr << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
+    std::ostringstream output;
+
+    if (printformat_json)
+    {
+        output << "{";
+        output << "\"sid\":" << sid << ",";
+        output << "\"time\":" << mon.msTimeStamp << ",";
+        output << "\"window\":{";
+        output << "\"flow\":" << mon.pktFlowWindow << ",";
+        output << "\"congestion\":" << mon.pktCongestionWindow << ",";    
+        output << "\"flight\":" << mon.pktFlightSize;    
+        output << "},";
+        output << "\"link\":{";
+        output << "\"rtt\":" << mon.msRTT << ",";
+        output << "\"bandwidth\":" << mon.mbpsBandwidth << ",";
+        output << "\"maxBandwidth\":" << mon.mbpsMaxBW;
+        output << "},";
+        output << "\"send\":{";
+        output << "\"packets\":" << mon.pktSent << ",";
+        output << "\"packetsLost\":" << mon.pktSndLoss << ",";
+        output << "\"packetsDropped\":" << mon.pktSndDrop << ",";
+        output << "\"packetsRetransmitted\":" << mon.pktRetrans << ",";        
+        output << "\"bytes\":" << mon.byteSent << ",";
+        output << "\"bytesDropped\":" << mon.byteSndDrop << ",";
+        output << "\"mbitRate\":" << mon.mbpsSendRate;
+        output << "},";
+        output << "\"recv\": {";
+        output << "\"packets\":" << mon.pktRecv << ",";
+        output << "\"packetsLost\":" << mon.pktRcvLoss << ",";
+        output << "\"packetsDropped\":" << mon.pktRcvDrop << ",";
+        output << "\"packetsRetransmitted\":" << mon.pktRcvRetrans << ",";
+        output << "\"packetsBelated\":" << mon.pktRcvBelated << ",";
+        output << "\"bytes\":" << mon.byteRecv << ",";
+        output << "\"bytesLost\":" << mon.byteRcvLoss << ",";
+        output << "\"bytesDropped\":" << mon.byteRcvDrop << ",";
+        output << "\"mbitRate\":" << mon.mbpsRecvRate;
+        output << "}";
+        output << "}" << endl;
+    }
+    else
+    {
+        output << "======= SRT STATS: sid=" << sid << endl;
+        output << "PACKETS     SENT: " << setw(11) << mon.pktSent            << "  RECEIVED:   " << setw(11) << mon.pktRecv              << endl;
+        output << "LOST PKT    SENT: " << setw(11) << mon.pktSndLoss         << "  RECEIVED:   " << setw(11) << mon.pktRcvLoss           << endl;
+        output << "REXMIT      SENT: " << setw(11) << mon.pktRetrans         << "  RECEIVED:   " << setw(11) << mon.pktRcvRetrans        << endl;
+        output << "DROP PKT    SENT: " << setw(11) << mon.pktSndDrop         << "  RECEIVED:   " << setw(11) << mon.pktRcvDrop           << endl;
+        output << "RATE     SENDING: " << setw(11) << mon.mbpsSendRate       << "  RECEIVING:  " << setw(11) << mon.mbpsRecvRate         << endl;
+        output << "BELATED RECEIVED: " << setw(11) << mon.pktRcvBelated      << "  AVG TIME:   " << setw(11) << mon.pktRcvAvgBelatedTime << endl;
+        output << "REORDER DISTANCE: " << setw(11) << mon.pktReorderDistance << endl;
+        output << "WINDOW      FLOW: " << setw(11) << mon.pktFlowWindow      << "  CONGESTION: " << setw(11) << mon.pktCongestionWindow  << "  FLIGHT: " << setw(11) << mon.pktFlightSize << endl;
+        output << "LINK         RTT: " << setw(9)  << mon.msRTT            << "ms  BANDWIDTH:  " << setw(7)  << mon.mbpsBandwidth    << "Mb/s " << endl;
+        output << "BUFFERLEFT:  SND: " << setw(11) << mon.byteAvailSndBuf    << "  RCV:        " << setw(11) << mon.byteAvailRcvBuf      << endl;
+    }
+
+    cerr << output.str() << std::flush;
+}
+
+static void PrintSrtBandwidth(double mbpsBandwidth)
+{
+    std::ostringstream output;
+
+    if (printformat_json) {
+        output << "{\"bandwidth\":" << mbpsBandwidth << '}' << endl;
+    } else {
+        output << "+++/+++SRT BANDWIDTH: " << mbpsBandwidth << endl;
+    }
+
+    cerr << output.str() << std::flush;
 }
 
 
@@ -221,7 +282,7 @@ void SrtCommon::PrepareListener(string host, int port, int backlog)
         Error(UDT::getlasterror(), "srt_bind");
     }
 
-    Verb() << " listen...\n";
+    Verb() << " listen...";
 
     stat = srt_listen(m_bindsock, backlog);
     if ( stat == SRT_ERROR )
@@ -265,7 +326,7 @@ bool SrtCommon::AcceptNewClient()
     srt_close(m_bindsock);
     m_bindsock = SRT_INVALID_SOCK;
 
-    Verb() << " connected.\n";
+    Verb() << " connected.";
 
     // ConfigurePre is done on bindsock, so any possible Pre flags
     // are DERIVED by sock. ConfigurePost is done exclusively on sock.
@@ -282,7 +343,7 @@ void SrtCommon::Init(string host, int port, map<string,string> par, bool dir_out
     InitParameters(host, par);
 
     Verb() << "Opening SRT " << (dir_output ? "target" : "source") << " " << m_mode
-        << " on " << host << ":" << port << "\n";
+        << " on " << host << ":" << port;
 
     if ( m_mode == "caller" )
         OpenClient(host, port);
@@ -419,7 +480,7 @@ void SrtCommon::ConnectClient(string host, int port)
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
 
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    Verb() << "Connecting to " << host << ":" << port;
 
     int stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
@@ -437,7 +498,7 @@ void SrtCommon::Error(UDT::ERRORINFO& udtError, string src)
 {
     int udtResult = udtError.getErrorCode();
     string message = udtError.getErrorMessage();
-    Verb() << "\nERROR #" << udtResult << ": " << message << "\n";
+    Verb() << "\nERROR #" << udtResult << ": " << message;
 
     udtError.clear();
     throw TransmissionError("error: " + src + ": " + message);
@@ -459,7 +520,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
     sockaddr_in localsa = CreateAddrInet(adapter, port);
     sockaddr* plsa = (sockaddr*)&localsa;
 
-    Verb() << "Binding a server on " << adapter << ":" << port << "\n";
+    Verb() << "Binding a server on " << adapter << ":" << port;
 
     stat = srt_bind(m_sock, plsa, sizeof localsa);
     if ( stat == SRT_ERROR )
@@ -470,7 +531,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 
     sockaddr_in sa = CreateAddrInet(host, port);
     sockaddr* psa = (sockaddr*)&sa;
-    Verb() << "Connecting to " << host << ":" << port << "\n";
+    Verb() << "Connecting to " << host << ":" << port;
 
     stat = srt_connect(m_sock, psa, sizeof sa);
     if ( stat == SRT_ERROR )
@@ -486,7 +547,7 @@ void SrtCommon::OpenRendezvous(string adapter, string host, int port)
 
 void SrtCommon::Close()
 {
-    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...\n";
+    Verb() << "SrtCommon: DESTROYING CONNECTION, closing sockets (rt%" << m_sock << " ls%" << m_bindsock << ")...";
 
     if ( m_sock != SRT_INVALID_SOCK )
     {
@@ -500,7 +561,7 @@ void SrtCommon::Close()
         m_bindsock = SRT_INVALID_SOCK ;
     }
 
-    Verb() << "SrtCommon: ... done.\n";
+    Verb() << "SrtCommon: ... done.";
 }
 
 SrtCommon::~SrtCommon()
@@ -551,17 +612,23 @@ bool SrtSource::Read(size_t chunk, bytevector& data)
     if ( chunk < data.size() )
         data.resize(chunk);
 
-    CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, clear_stats);
-    clear_stats = false;
-    if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
+    const bool need_bw_report    = transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1;
+    const bool need_stats_report = transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1;
+
+    if (need_bw_report || need_stats_report)
     {
-        cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
-    }
-    if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
-    {
-        PrintSrtStats(m_sock, perf);
-        clear_stats = !transmit_total_stats;
+        CBytePerfMon perf;
+        srt_bstats(m_sock, &perf, clear_stats);
+        clear_stats = false;
+        if (need_bw_report)
+        {
+            PrintSrtBandwidth(perf.mbpsBandwidth);
+        }
+        if (need_stats_report)
+        {
+            PrintSrtStats(m_sock, perf);
+            clear_stats = !transmit_total_stats;
+        }
     }
 
     ++counter;
@@ -597,17 +664,23 @@ bool SrtTarget::Write(const bytevector& data)
         return false;
     }
 
-    CBytePerfMon perf;
-    srt_bstats(m_sock, &perf, clear_stats);
-    clear_stats = false;
-    if ( transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1 )
+    const bool need_bw_report = transmit_bw_report && (counter % transmit_bw_report) == transmit_bw_report - 1;
+    const bool need_stats_report = transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1;
+
+    if (need_bw_report || need_stats_report)
     {
-        cerr << "+++/+++SRT BANDWIDTH: " << perf.mbpsBandwidth << endl;
-    }
-    if ( transmit_stats_report && (counter % transmit_stats_report) == transmit_stats_report - 1)
-    {
-        PrintSrtStats(m_sock, perf);
-        clear_stats = !transmit_total_stats;
+        CBytePerfMon perf;
+        srt_bstats(m_sock, &perf, clear_stats);
+        clear_stats = false;
+        if (need_bw_report)
+        {
+            PrintSrtBandwidth(perf.mbpsBandwidth);
+        }
+        if (need_stats_report)
+        {
+            PrintSrtStats(m_sock, perf);
+            clear_stats = !transmit_total_stats;
+        }
     }
 
     ++counter;
@@ -708,6 +781,11 @@ public:
 
     ConsoleSource()
     {
+#ifdef _WIN32
+        // The default stdin mode on windows is text.
+        // We have to set it to the binary mode
+        _setmode(_fileno(stdin), _O_BINARY);
+#endif
     }
 
     bool Read(size_t chunk, bytevector& data) override
@@ -742,6 +820,11 @@ public:
 
     ConsoleTarget()
     {
+#ifdef _WIN32
+        // The default stdout mode on windows is text.
+        // We have to set it to the binary mode
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
     }
 
     bool Write(const bytevector& data) override
@@ -796,7 +879,7 @@ protected:
         ::setsockopt(m_sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof yes);
 
         // set non-blocking mode
-#if defined(WIN32)
+#if defined(_WIN32)
         unsigned long ulyes = 1;
         if (ioctlsocket(m_sock, FIONBIO, &ulyes) == SOCKET_ERROR)
 #else
@@ -865,7 +948,7 @@ protected:
                 mreq_arg_ptr = &mreq;
             }
 
-#ifdef WIN32
+#ifdef _WIN32
             const char* mreq_arg = (const char*)mreq_arg_ptr;
             const auto status_error = SOCKET_ERROR;
 #else
@@ -873,7 +956,7 @@ protected:
             const auto status_error = -1;
 #endif
 
-#if defined(WIN32) || defined(__CYGWIN__)
+#if defined(_WIN32) || defined(__CYGWIN__)
             // On Windows it somehow doesn't work when bind()
             // is called with multicast address. Write the address
             // that designates the network device here.
@@ -906,10 +989,10 @@ protected:
             int ttl = stoi(attr.at("ttl"));
             int res = setsockopt(m_sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_TTL) to " << ttl;
             res = setsockopt(m_sock, IPPROTO_IP, IP_MULTICAST_TTL, (const char*)&ttl, sizeof ttl);
             if (res == -1)
-                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl << "\n";
+                Verb() << "WARNING: failed to set 'ttl' (IP_MULTICAST_TTL) to " << ttl;
 
             attr.erase("ttl");
         }
@@ -924,7 +1007,7 @@ protected:
                 string value = m_options.at(o.name);
                 bool ok = o.apply<SocketOption::SYSTEM>(m_sock, value);
                 if ( !ok )
-                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value << "\n";
+                    Verb() << "WARNING: failed to set '" << o.name << "' to " << value;
             }
         }
     }
@@ -941,7 +1024,7 @@ protected:
 
     ~UdpCommon()
     {
-#ifdef WIN32
+#ifdef _WIN32
         if (m_sock != -1)
         {
            shutdown(m_sock, SD_BOTH);
