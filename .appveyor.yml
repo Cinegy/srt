@@ -20,10 +20,10 @@ build_script:
   # build pthread
   - git clone https://github.com/GerHobbelt/pthread-win32.git C:/pthread-src
   - ps: msbuild C:/pthread-src/pthread.${VS_VERSION}.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$DEVENV_PLATFORM
-  - ps: mkdir C:/pthread-$DEVENV_PLATFORM
-  - ps: mkdir C:/pthread-$DEVENV_PLATFORM/include
-  - ps: mkdir C:/pthread-$DEVENV_PLATFORM/lib
-  - ps: cp C:/pthread-src/*.h C:/pthread-win32/include
+  - ps: mkdir C:/pthread-win$($Env:PLATFORM)
+  - ps: mkdir C:/pthread-win$($Env:PLATFORM)/include
+  - ps: mkdir C:/pthread-win$($Env:PLATFORM)/lib
+  - ps: cp C:/pthread-src/*.h C:/pthread-win$($Env:PLATFORM)/include
   - ps: cp C:/pthread-src/bin/$($DEVENV_PLATFORM)_MSVC${VS_VERSION}.${Env:CONFIGURATION}/pthread_lib.lib C:/pthread-$DEVENV_PLATFORM/lib
   # build SRT
   - ps: if ( $VS_VERSION -eq '2013' -and $Env:PLATFORM -eq 'x86' ) { $CMAKE_GENERATOR = 'Visual Studio 12 2013' }
@@ -39,7 +39,7 @@ test_script:
   
 after_build:
 - cmd: >-
-    scripts/gather-package.bat $DEVENV_PLATFORM
+    scripts/gather-package.bat $Env:PLATFORM
         7z a SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\package\*
         appveyor PushArtifact SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-%APPVEYOR_BUILD_VERSION%.zip
 
