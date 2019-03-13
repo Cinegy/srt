@@ -11,6 +11,7 @@ image:
 
 platform:
   - x64
+  - x86
 
 build_script:
   # build pthread
@@ -23,10 +24,10 @@ build_script:
   - ps: cp C:/pthread-src/*.h C:/pthread-win32/include
   - ps: cp C:/pthread-src/bin/x64_MSVC${VS_VERSION}.${Env:CONFIGURATION}/pthread_lib.lib C:/pthread-win32/lib
   # build SRT
-  - ps: if ( $VS_VERSION -eq "2013" ) { $CMAKE_GENERATOR = "Visual Studio 12 2013 Win64" } else { $CMAKE_GENERATOR = "Visual Studio 14 2015 Win64" }
+  - ps: if ( $VS_VERSION -eq "2013" ) { $CMAKE_GENERATOR = "Visual Studio 12 2013 Win$($Env:PLATFORM)" } else { $CMAKE_GENERATOR = "Visual Studio 14 2015 Win$($Env:PLATFORM)" }
   - ps: if ( $VS_VERSION -eq "2013" ) { $ENABLE_UNITTESTS = "OFF" } else { $ENABLE_UNITTESTS = "ON" }
   - ps: cmake . -G"$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=$Env:CONFIGURATION -DENABLE_UNITTESTS="$ENABLE_UNITTESTS"
-  - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=x64
+  - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$($Env:PLATFORM)
   
 test_script:
   - ps: if ( $VS_VERSION -ne "2013" ) { ctest --extra-verbose -C $Env:CONFIGURATION }
