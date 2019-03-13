@@ -4,7 +4,7 @@ rem Create empty directories for package bundle
 IF "%PLATFORM%"=="x86" (
     SET FOLDER_PLATFORM="32"
 ) ELSE IF "%PLATFORM%"=="x64" (
-    SET FOLDER_PLATFORM="32"
+    SET FOLDER_PLATFORM="64"
 ) ELSE (
     echo "Platform %PLATFORM% is not supported"
     exit 1
