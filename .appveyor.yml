@@ -24,7 +24,7 @@ build_script:
   - ps: mkdir C:/pthread-win$($Env:PLATFORM)/include
   - ps: mkdir C:/pthread-win$($Env:PLATFORM)/lib
   - ps: cp C:/pthread-src/*.h C:/pthread-win$($Env:PLATFORM)/include
-  - ps: cp C:/pthread-src/bin/$($DEVENV_PLATFORM)_MSVC${VS_VERSION}.${Env:CONFIGURATION}/pthread_lib.lib C:/pthread-$DEVENV_PLATFORM/lib
+  - ps: cp C:/pthread-src/bin/$($DEVENV_PLATFORM)_MSVC${VS_VERSION}.${Env:CONFIGURATION}/pthread_lib.lib C:/pthread-win$($Env:PLATFORM)/lib
   # build SRT
   - ps: if ( $VS_VERSION -eq '2013' -and $Env:PLATFORM -eq 'x86' ) { $CMAKE_GENERATOR = 'Visual Studio 12 2013' }
   - ps: if ( $VS_VERSION -eq '2013' -and $Env:PLATFORM -eq 'x64' ) { $CMAKE_GENERATOR = 'Visual Studio 12 2013 Win64' }
