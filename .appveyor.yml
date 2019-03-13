@@ -17,6 +17,7 @@ build_script:
   # prep shared variables
   - ps: if ( $Env:PLATFORM -eq 'x86' ) { $DEVENV_PLATFORM = 'Win32' } else { $DEVENV_PLATFORM = 'x64' }
   - ps: if ( $Env:APPVEYOR_BUILD_WORKER_IMAGE -eq 'Visual Studio 2013' ) { $VS_VERSION='2013' } else { $VS_VERSION='2015' }
+  - ps: $env:VS_VERSION = $VS_VERSION
   # build pthread
   - git clone https://github.com/GerHobbelt/pthread-win32.git C:/pthread-src
   - ps: if ( $DEVENV_PLATFORM -eq 'Win32' ) { $FOLDER_PLATFORM = 'win32' } else { $FOLDER_PLATFORM = 'win64' }
@@ -41,8 +42,8 @@ test_script:
 after_build:
 - cmd: >-
     scripts/gather-package.bat
-        7z a SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-Win$($Env:PLATFORM)-$VS_VERSION-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\package\*
-        appveyor PushArtifact SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-Win$($Env:PLATFORM)-$VS_VERSION-%APPVEYOR_BUILD_VERSION%.zip
+        7z a SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-Win%PLATFORM%-%VS_VERSION%-%APPVEYOR_BUILD_VERSION%.zip %APPVEYOR_BUILD_FOLDER%\package\*
+        appveyor PushArtifact SRT-%APPVEYOR_REPO_BRANCH%-%CONFIGURATION%-Win%PLATFORM%-%VS_VERSION%-%APPVEYOR_BUILD_VERSION%.zip
 
 on_finish:
 # - ps: $blockRdp = $true; iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
