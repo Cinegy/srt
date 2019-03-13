@@ -3,14 +3,14 @@ init:
  
 configuration:
   - Release
-#  - Debug
+  - Debug
 
 image:
   - Visual Studio 2015
-#  - Visual Studio 2013
+  - Visual Studio 2013
 
 platform:
- # - x64
+  - x64
   - x86
 
 build_script:
