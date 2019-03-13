@@ -30,7 +30,8 @@ build_script:
   - ps: if ( $VS_VERSION -eq '2015' -and $Env:PLATFORM -eq 'x64' ) { $CMAKE_GENERATOR = 'Visual Studio 14 2015 Win64' }
   - ps: if ( $VS_VERSION -eq "2013" ) { $ENABLE_UNITTESTS = "OFF" } else { $ENABLE_UNITTESTS = "ON" }
   - ps: cmake . -G"$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=$Env:CONFIGURATION -DENABLE_UNITTESTS="$ENABLE_UNITTESTS"
-  - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$($Env:PLATFORM)
+  - ps: if ( $Env:PLATFORM -eq 'x86' ) { $DEVENV_PLATFORM = 'Win32' } else { $DEVENV_PLATFORM = 'x64' }
+  - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$DEVENV_PLATFORM
   
 test_script:
   - ps: if ( $VS_VERSION -ne "2013" ) { ctest --extra-verbose -C $Env:CONFIGURATION }
