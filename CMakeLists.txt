@@ -329,7 +329,7 @@ if (HAVE_COMPILER_GNU_COMPAT)
 	set (SRT_GCC_WARN "-Wall -Wextra")
 else()
 	# cpp debugging on Windows :D
-	#set (SRT_GCC_WARN "/showIncludes")
+	#set (SRT_GCC_WARN "/showIncludes /wd4711")
 endif()
 
 if (USE_STATIC_LIBSTDCXX)
