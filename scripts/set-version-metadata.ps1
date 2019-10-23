@@ -25,7 +25,7 @@ $FileDescriptionBranchCommitValue = "Local Build"
 if($Env:APPVEYOR){
 	#make AppVeyor update with this new version number
 	Update-AppveyorBuild -Version "$majorVer.$minorVer.$patchVer.$buildNum"
-	$FileDescriptionBranchCommitValue = "$($Env:APPVEYOR_REPO_BRANCH)-$($Env:APPVEYOR_REPO_COMMIT)"
+	$FileDescriptionBranchCommitValue = "$($Env:APPVEYOR_REPO_BRANCH)-($($Env:APPVEYOR_REPO_COMMIT.substring(0,8)))"
 }
 
 #find C++ resource files and update file description with branch / commit details
