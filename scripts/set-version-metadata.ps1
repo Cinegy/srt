@@ -10,7 +10,7 @@ $buildNum=0
 $versionSniffingRegex = "(\s*#define\s+(\S+)\s+)(\d+)"
 
 #read generated file, load values from this with regular expression
-Get-Content ".\version.h" |  Where-Object { $_ -match $versionSniffingRegex } | ForEach-Object {
+Get-Content "$PSScriptRoot/../version.h" |  Where-Object { $_ -match $versionSniffingRegex } | ForEach-Object {
 	switch ($Matches[2])
 	{
 		"SRT_VERSION_MAJOR" { $majorVer = $Matches[3] }
@@ -31,7 +31,7 @@ if($Env:APPVEYOR){
 #find C++ resource files and update file description with branch / commit details
 $FileDescriptionStringRegex = '(\bVALUE\s+\"FileDescription\"\s*\,\s*\")([^\"]*\\\")*[^\"]*(\")'
 
-Get-ChildItem -Path "./srtcore/srt_shared.rc" | ForEach-Object {
+Get-ChildItem -Path "$PSScriptRoot/../srtcore/srt_shared.rc" | ForEach-Object {
     $fileName = $_
     Write-Host "Processing metadata changes for file: $fileName"
 
