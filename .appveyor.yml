@@ -34,7 +34,9 @@ build_script:
   - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$DEVENV_PLATFORM
   - ps: cd ../  
 test_script:
+  - ps: cd _build
   - ps: if ( $VS_VERSION -eq '2015' ) { ctest --extra-verbose -C $Env:CONFIGURATION }
+  - ps: cd ../
   
 after_build:
 - cmd: >-
