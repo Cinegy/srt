@@ -30,7 +30,7 @@ build_script:
   - ps: mkdir _build
   - ps: cd _build
   - ps: cmake ../ -G"$CMAKE_GENERATOR" -DCMAKE_BUILD_TYPE=$Env:CONFIGURATION -DENABLE_UNITTESTS="$ENABLE_UNITTESTS"
-  - ps: ./scripts/set-version-metadata.ps1
+  - ps: ../scripts/set-version-metadata.ps1
   - ps: msbuild SRT.sln /p:Configuration=$Env:CONFIGURATION /p:Platform=$DEVENV_PLATFORM
     
 test_script:
