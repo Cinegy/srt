@@ -10,7 +10,7 @@ $buildNum=0
 $versionSniffingRegex = "(\s*#define\s+(\S+)\s+)(\d+)"
 
 #read generated file, load values from this with regular expression
-Get-Content "$PSScriptRoot/../version.h" |  Where-Object { $_ -match $versionSniffingRegex } | ForEach-Object {
+Get-Content "./version.h" |  Where-Object { $_ -match $versionSniffingRegex } | ForEach-Object {
 	switch ($Matches[2])
 	{
 		"SRT_VERSION_MAJOR" { $majorVer = $Matches[3] }
