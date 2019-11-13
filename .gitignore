@@ -34,5 +34,8 @@
 # Ignore any folder starting from underscore
 _*/
 
+# Ingore the packages folder, used for downloaded build dependencies
+packages/
+
 # Ignode Visual Studio Code temp folder
 .vs/
