@@ -206,11 +206,11 @@ void CTimer::sleepto(uint64_t nexttime_tk)
     rdtsc(t);
 
 #if USE_BUSY_WAITING
-#if defined(_WIN32)
-    const uint64_t threshold_us = 10000;   // 10 ms on Windows: bad accuracy of timers
-#else
+//#if defined(_WIN32)
+//    const uint64_t threshold_us = 10000;   // 10 ms on Windows: bad accuracy of timers
+//#else
     const uint64_t threshold_us = 1000;    // 1 ms on non-Windows platforms
-#endif
+//#endif
 #endif
 
     while (t < m_ullSchedTime_tk)
@@ -225,7 +225,8 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         if (wait_us == 0)
             break;
 #endif
-
+	SleepEx(1, FALSE);
+/*
         timespec timeout;
 #if ENABLE_MONOTONIC_CLOCK
         clock_gettime(CLOCK_MONOTONIC, &timeout);
@@ -245,7 +246,7 @@ void CTimer::sleepto(uint64_t nexttime_tk)
         pthread_cond_timedwait(&m_TickCond, &m_TickLock, &timeout);
         pthread_mutex_unlock(&m_TickLock);
         THREAD_RESUMED();
-
+*/
         rdtsc(t);
     }
 
