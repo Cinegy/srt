@@ -275,7 +275,7 @@ void CTimer::sleepto(uint64_t nexttime_tk)
 void CTimer::interrupt()
 {
    // schedule the sleepto time to the current CCs, so that it will stop
-   rdtsc(m_ullSchedTime_tk);
+   rdtsc((uint64_t)m_ullSchedTime_tk);
    tick();
 }
 
