@@ -508,7 +508,7 @@ private:
    uint64_t getTimeInMicroSec();
 
 private:
-   uint64_t m_ullSchedTime_tk;             // next schedulled time
+   volatile uint64_t m_ullSchedTime_tk;             // next scheduled time
 
    pthread_cond_t m_TickCond;
    pthread_mutex_t m_TickLock;
