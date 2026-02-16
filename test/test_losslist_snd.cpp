@@ -177,7 +177,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNodeHead01)
     // Remove up to element 4
     m_lossList->removeUpTo(4);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -226,7 +226,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNotInNodeHead01)
     EXPECT_EQ(m_lossList->getLossLength(), 4);
     m_lossList->removeUpTo(5);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -294,7 +294,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNotInNodeHead06)
     EXPECT_EQ(m_lossList->getLossLength(), 10);
     m_lossList->removeUpTo(50);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -328,7 +328,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNotInNodeHead08)
     EXPECT_EQ(m_lossList->getLossLength(), 1);
     m_lossList->removeUpTo(6);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -342,7 +342,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNotInNodeHead09)
     EXPECT_EQ(m_lossList->insert(1, 2), 2);
     m_lossList->removeUpTo(6);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -371,7 +371,7 @@ TEST_F(CSndLossListTest, BasicRemoveInListNotInNodeHead11)
     EXPECT_EQ(m_lossList->insert(1, 2), 2);
     m_lossList->removeUpTo(7);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -387,7 +387,7 @@ TEST_F(CSndLossListTest, InsertRemoveInsert01)
     EXPECT_EQ(m_lossList->insert(1, 2), 2);
     m_lossList->removeUpTo(6);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     CheckEmptyArray();
 }
 
@@ -525,7 +525,7 @@ TEST_F(CSndLossListTest, InsertFullListCoalesce)
         EXPECT_EQ(m_lossList->popLostSeq(), i);
         EXPECT_EQ(m_lossList->getLossLength(), CSndLossListTest::SIZE - i);
     }
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
 
     CheckEmptyArray();
@@ -558,7 +558,7 @@ TEST_F(CSndLossListTest, InsertFullListNoCoalesce)
         EXPECT_EQ(m_lossList->getLossLength(), initial_length - i);
     }
     EXPECT_EQ(m_lossList->popLostSeq(), seqno_last);
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
 
     CheckEmptyArray();
@@ -576,7 +576,7 @@ TEST_F(CSndLossListTest, InsertFullListNegativeOffset)
         EXPECT_EQ(m_lossList->popLostSeq(), i);
         EXPECT_EQ(m_lossList->getLossLength(), CSndLossListTest::SIZE - (i - 10000000 + 1));
     }
-    EXPECT_EQ(m_lossList->popLostSeq(), -1);
+    EXPECT_EQ(m_lossList->popLostSeq(), SRT_SEQNO_NONE);
     EXPECT_EQ(m_lossList->getLossLength(), 0);
 
     CheckEmptyArray();

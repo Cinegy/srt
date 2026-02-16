@@ -687,7 +687,7 @@ private:
     // should continue and return success or failure.
     void notifyBlockingConnect();
 
-    SRT_ATR_NODISCARD bool applyResponseSettings(const CPacket* pResponse) ATR_NOEXCEPT;
+    SRT_ATR_NODISCARD bool applyResponseSettings(const CPacket* pResponse /*[[nullable]]*/) ATR_NOEXCEPT;
     SRT_ATR_NODISCARD EConnectStatus processAsyncConnectResponse(const CPacket& pkt) ATR_NOEXCEPT;
     SRT_ATR_NODISCARD bool processAsyncConnectRequest(EReadStatus rst, EConnectStatus cst, const CPacket* response, const sockaddr_any& serv_addr);
     SRT_ATR_NODISCARD EConnectStatus craftKmResponse(uint32_t* aw_kmdata, size_t& w_kmdatasize);
@@ -1356,9 +1356,14 @@ private: // Generation and processing of packets
     /// @retval false Nothing was extracted for sending, @a nexttime should be ignored
     bool packData(CPacket& packet, time_point& nexttime, CNetworkInterface& src_addr);
 
-    /// Also excludes srt::CUDTUnited::m_GlobControlLock.
+#if USE_RECEIVER_UNIT_POOL
+    SRT_TSA_NEEDS_NONLOCKED(m_RcvTsbPdStartupLock, m_StatsLock, m_RecvLock, m_RcvLossLock, m_RcvBufferLock)
+    int acquireDataPacket(CPacketUnitPool::UnitSeries& source, CRcvQueue* provider);
+#else
+    /// Also needs unlocked srt::CUDTUnited::m_GlobControlLock.
     SRT_TSA_NEEDS_NONLOCKED(m_RcvTsbPdStartupLock, m_StatsLock, m_RecvLock, m_RcvLossLock, m_RcvBufferLock)
     int processData(CUnit* unit, CRcvQueue* provider);
+#endif
 
     /// This function passes the incoming packet to the initial processing
     /// (like packet filter) and is about to store it effectively to the
@@ -1377,14 +1382,25 @@ private: // Generation and processing of packets
     SRT_TSA_NEEDS_LOCKED(m_RcvBufferLock) // will lock inside
     int handleSocketPacketReception(std::vector<CRcvBuffer::UnitHandle>& incoming, bool& w_new_inserted, time_point& w_next_tsbpd, bool& w_was_sent_in_order, CUDT::loss_seqs_t& w_srt_loss_seqs);
 
+    /// Check if the packet SHOULD BE decrypted, and decrypt if if needed.
+    /// False is returned if:
+    /// * The packet is not encrypted, while KMSTATE is SECURED ("should be" encrypted)
+    /// * The decryption process failed
+    ///
+    /// @param w_packet Packet to be possibly decrypted
+    /// @return True if the packet need not be decrypted, or was successfully decrypted.
+    SRT_TSA_NEEDS_LOCKED(m_RcvBufferLock)
+    bool handlePacketDecryption(CPacket& w_packet);
+
+
     // This function is to return the packet's play time (time when
     // it is submitted to the reading application) of the given packet.
     /// The @a grp passed by void* is not used yet
     /// and shall not be used when SRT_ENABLE_BONDING=0.
     time_point getPktTsbPdTime(void* grp, const CPacket& packet);
 
-    SRT_TSA_NEEDS_NONLOCKED(m_RcvTsbPdStartupLock)
     /// Checks and spawns the TSBPD thread if required.
+    SRT_TSA_NEEDS_NONLOCKED(m_RcvTsbPdStartupLock)
     int checkLazySpawnTsbPdThread();
 
     void processClose();

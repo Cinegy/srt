@@ -441,10 +441,10 @@ public:
     { checkInitial(); }
 
 
-    // FOR TESTING PURPOSES ONLY - to avoid creating a CMultiplexer object in order to test the buffer.
     CRcvBuffer(int initSeqNo, size_t size, CMultiplexer* single_muxer, bool bMessageAPI):
         CONSTRUCT_RCV_BUFFER(new SingleCondenser(single_muxer));
 
+    // FOR TESTING PURPOSES ONLY - to avoid creating a CMultiplexer object in order to test the buffer.
     CRcvBuffer(int initSeqNo, size_t size, UnitQueue* single_muxer, bool bMessageAPI):
         CONSTRUCT_RCV_BUFFER(new SingleCondenser(single_muxer));
 
@@ -617,7 +617,7 @@ public:
     /// @return actual number of bytes extracted from the buffer.
     ///          0 if nothing to read.
     ///         -1 on failure.
-    int readMessage(char* data, size_t len, SRT_MSGCTRL* msgctrl = NULL, std::pair<int32_t, int32_t>* pw_seqrange = NULL);
+    int readMessage(char* data, size_t len, SRT_MSGCTRL& msgctrl, std::pair<int32_t, int32_t>* pw_seqrange = NULL);
 
     /// Read acknowledged data into a user buffer.
     /// @param [in, out] dst pointer to the target user buffer.
@@ -710,6 +710,7 @@ public:
     std::pair<int, int> getAvailablePacketsRange() const;
 
     int32_t getFirstLossSeq(int32_t fromseq, int32_t* opt_end = NULL);
+    void getUnitSeriesInfo(int32_t fromseq, size_t maxsize, std::vector<int32_t>& w_sources);
 
     bool empty() const
     {
@@ -843,7 +844,6 @@ private:
 private:
     void countBytes(int pkts, int bytes);
     void updateNonreadPos();
-    void releaseUnitInPos(CPos pos);
 
     /// @brief Drop a unit from the buffer.
     /// @param pos position in the m_entries of the unit to drop.
@@ -914,10 +914,11 @@ private:
             , muxID(-1)
             , status(EntryState_Empty)
         {}
-        // XXX HERE: CPacketUnitPool::UnitPtr pUnit;
         UnitHandle pUnit;
         int muxID; // if group-buffer, search for muxer providing it.
         EntryStatus status;
+
+        std::string debug();
     };
 
     void acquireUnitAt(CPos position, UnitHandle& unit);

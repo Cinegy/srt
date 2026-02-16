@@ -306,7 +306,7 @@ void CUDTUnited::cleanupAllSockets()
     {
         CUDTSocket* s = i->second;
 
-#if ENABLE_BONDING
+#if SRT_ENABLE_BONDING
         if (s->m_GroupOf)
         {
             s->removeFromGroup(false);
@@ -329,7 +329,7 @@ void CUDTUnited::cleanupAllSockets()
     }
     m_Sockets.clear();
 
-#if ENABLE_BONDING
+#if SRT_ENABLE_BONDING
     for (groups_t::iterator j = m_Groups.begin(); j != m_Groups.end(); ++j)
     {
         delete j->second;
@@ -901,6 +901,10 @@ int CUDTUnited::newConnection(const SRTSOCKET     listener,
             // sockets of the same group were submitted to accept, they must
             // be removed from the accept queue at this time.
             should_submit_to_accept = g->groupPending_LOCKED();
+
+            // Ok, whether handled in the background, or reported through accept,
+            // all group-member sockets should be managed.
+            ns->core().m_bManaged = true;
 
             // Update the status in the group so that the next
             // operation can include the socket in the group operation.
@@ -1866,7 +1870,7 @@ SRTSOCKET CUDTUnited::groupConnect(CUDTGroup* pg, SRT_SOCKGROUPCONFIG* targets, 
         // Do it after setting all stored options, as some of them may
         // influence some group data.
 
-        groups::SocketData data = groups::prepareSocketData(ns);
+        groups::SocketData data = groups::prepareSocketData(ns, g.type());
         if (targets[tii].token != -1)
         {
             // Reuse the token, if specified by the caller
@@ -2402,7 +2406,7 @@ void CUDTUnited::deleteGroup_LOCKED(CUDTGroup* g)
         CUDTSocket* s = i->second;
         if (s->m_GroupOf == g)
         {
-            HLOGC(smlog.Debug, log << "deleteGroup: IPE: existing @" << s->id() << " points to a dead group!");
+            LOGC(smlog.Error, log << "deleteGroup: IPE: existing @" << s->id() << " points to a dead group!");
             s->m_GroupOf         = NULL;
             s->m_GroupMemberData = NULL;
         }
@@ -2415,7 +2419,7 @@ void CUDTUnited::deleteGroup_LOCKED(CUDTGroup* g)
         CUDTSocket* s = i->second;
         if (s->m_GroupOf == g)
         {
-            HLOGC(smlog.Debug, log << "deleteGroup: IPE: closed @" << s->id() << " points to a dead group!");
+            LOGC(smlog.Error, log << "deleteGroup: IPE: closed @" << s->id() << " points to a dead group!");
             s->m_GroupOf         = NULL;
             s->m_GroupMemberData = NULL;
         }
@@ -2993,7 +2997,7 @@ int CUDTUnited::selectEx(const vector<SRTSOCKET>& fds,
         {
             CUDTSocket* s = locateSocket(*i);
 
-            if ((!s) || s->core().m_bBroken || (s->m_Status == SRTS_CLOSED))
+            if ((!s) || s->core().m_bBroken || (s->m_Status == SRTS_CLOSED) || s->m_GroupOf)
             {
                 if (exceptfds)
                 {
@@ -3352,6 +3356,12 @@ void CUDTUnited::checkBrokenSockets()
                 continue;
         }
         else
+
+        // Additional note on group receiver: with the new group
+        // receiver m_pRcvBuffer in the socket core is NULL always,
+        // but that's not a problem - you can close the member socket
+        // safely without worrying about reading data because they are
+        // in the group anyway.
         {
             CUDT& u = s->core();
 

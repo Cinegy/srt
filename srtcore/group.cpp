@@ -4,6 +4,8 @@
 
 #include "api.h"
 #include "group.h"
+#include "socketconfig.h"
+#include "hvu_threadname.h"
 
 using namespace std;
 using namespace srt::sync;
@@ -93,7 +95,7 @@ bool CUDTGroup::applyGroupSequences(SRTSOCKET target, int32_t& w_snd_isn, int32_
             // NOTE: the groupwise scheduling sequence might have been set
             // already. If so, it means that it was set by either:
             // - the call of this function on the very first connected socket (see below)
-            // - the call to `sendBroadcast` or `sendBackup`
+            // - the call to `sendMultilink` or `sendBackup`
             // In both cases, we want THIS EXACTLY value to be reported
             if (m_iLastSchedSeqNo != -1)
             {
@@ -740,7 +742,7 @@ static bool getOptDefault(SRT_SOCKOPT optname, void* pw_optval, int& w_optlen)
         RD(true);
     case SRTO_MAXBW:
         RD(int64_t(-1));
-#ifdef ENABLE_MAXREXMITBW
+#ifdef SRT_ENABLE_MAXREXMITBW
     case SRTO_MAXREXMITBW:
         RD(int64_t(-1));
 #endif
@@ -1070,7 +1072,7 @@ void CUDTGroup::close()
             CUDTSocket* s = CUDT::uglobal().locateSocket_LOCKED(ig->id);
             if (!s)
             {
-                HLOGC(smlog.Debug, log << "group/close: IPE(NF): group member @" << ig->id << " already deleted");
+                LOGC(smlog.Error, log << "group/close: IPE(NF): group member @" << ig->id << " already deleted");
                 continue;
             }
 
@@ -1218,6 +1220,11 @@ int CUDTGroup::send(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
 int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 {
+    return sendMultilink(buf, len, (w_mc), false);
+}
+
+int CUDTGroup::sendMultilink(const char* buf, int len, SRT_MSGCTRL& w_mc, bool use_select SRT_ATR_UNUSED)
+{
     // Avoid stupid errors in the beginning.
     if (len <= 0)
     {
@@ -1281,7 +1288,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             if (!pu || pu->m_bBroken)
             {
                 HLOGC(gslog.Debug,
-                        log << "grp/sendBroadcast: socket @" << d->id << " detected +Broken - transit to BROKEN");
+                        log << "grp/sendMultilink: socket @" << d->id << " detected +Broken - transit to BROKEN");
                 d->sndstate = SRT_GST_BROKEN;
                 d->rcvstate = SRT_GST_BROKEN;
             }
@@ -1291,7 +1298,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         if (d->sndstate == SRT_GST_BROKEN)
         {
             HLOGC(gslog.Debug,
-                  log << "grp/sendBroadcast: socket in BROKEN state: @" << d->id
+                  log << "grp/sendMultilink: socket in BROKEN state: @" << d->id
                       << ", sockstatus=" << SockStatusStr(d->ps ? d->ps->getStatus() : SRTS_NONEXIST));
             wipeme.push_back(d->id);
             continue;
@@ -1320,7 +1327,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 continue;
             }
 
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: socket in IDLE state: @" << d->id << " - will activate it");
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: socket in IDLE state: @" << d->id << " - will activate it");
             // This is idle, we'll take care of them next time
             // Might be that:
             // - this socket is idle, while some NEXT socket is running
@@ -1334,13 +1341,13 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         if (d->sndstate == SRT_GST_RUNNING)
         {
             HLOGC(gslog.Debug,
-                  log << "grp/sendBroadcast: socket in RUNNING state: @" << d->id << " - will send a payload");
+                  log << "grp/sendMultilink: socket in RUNNING state: @" << d->id << " - will send a payload");
             activeLinks.push_back(d);
             continue;
         }
 
         HLOGC(gslog.Debug,
-              log << "grp/sendBroadcast: socket @" << d->id << " not ready, state: " << StateStr(d->sndstate) << "("
+              log << "grp/sendMultilink: socket @" << d->id << " not ready, state: " << StateStr(d->sndstate) << "("
                   << int(d->sndstate) << ") - NOT sending, SET AS PENDING");
 
         pendingSockets.push_back(d->id);
@@ -1420,7 +1427,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // Now we can go to the idle links and attempt to send the payload
     // also over them.
 
-    // TODO: { sendBroadcast_ActivateIdleLinks
+    // TODO: { sendMultilink_ActivateIdleLinks
     for (vector<gli_t>::iterator i = idleLinks.begin(); i != idleLinks.end(); ++i)
     {
         gli_t d       = *i;
@@ -1432,7 +1439,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         if (curseq != SRT_SEQNO_NONE && curseq != lastseq)
         {
             HLOGC(gslog.Debug,
-                    log << "grp/sendBroadcast: socket @" << d->id << ": override snd sequence %" << lastseq << " with %"
+                    log << "grp/sendMultilink: socket @" << d->id << ": override snd sequence %" << lastseq << " with %"
                     << curseq << " (diff by " << CSeqNo::seqcmp(curseq, lastseq)
                     << "); SENDING PAYLOAD: " << BufferStamp(buf, len));
             d->ps->core().overrideSndSeqNo(curseq);
@@ -1440,7 +1447,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         else
         {
             HLOGC(gslog.Debug,
-                    log << "grp/sendBroadcast: socket @" << d->id << ": sequence remains with original value: %"
+                    log << "grp/sendMultilink: socket @" << d->id << ": sequence remains with original value: %"
                     << lastseq << "; SENDING PAYLOAD " << BufferStamp(buf, len));
         }
 
@@ -1480,7 +1487,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     if (nextseq != SRT_SEQNO_NONE)
     {
         HLOGC(gslog.Debug,
-              log << "grp/sendBroadcast: $" << id() << ": updating current scheduling sequence %" << nextseq);
+              log << "grp/sendMultilink: $" << id() << ": updating current scheduling sequence %" << nextseq);
         m_iLastSchedSeqNo = nextseq;
     }
 
@@ -1509,7 +1516,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     if (!pendingSockets.empty() || nblocked)
     {
-        HLOGC(gslog.Debug, log << "grp/sendBroadcast: found pending sockets (blocked: " << nblocked << "), polling them.");
+        HLOGC(gslog.Debug, log << "grp/sendMultilink: found pending sockets (blocked: " << nblocked << "), polling them.");
 
         // These sockets if they are in pending state, they should be added to m_SndEID
         // at the connecting stage.
@@ -1519,7 +1526,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             // Sanity check - weird pending reported.
             LOGC(gslog.Error,
-                 log << "grp/sendBroadcast: IPE: reported pending sockets, but EID is empty - wiping pending!");
+                 log << "grp/sendMultilink: IPE: reported pending sockets, but EID is empty - wiping pending!");
             copy(pendingSockets.begin(), pendingSockets.end(), back_inserter(wipeme));
         }
         else
@@ -1532,7 +1539,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             // If this is the case when 
             if (m_bSynSending && is_pending_blocked)
             {
-                HLOGC(gslog.Debug, log << "grp/sendBroadcast: will block for " << m_iSndTimeOut << " - waiting for any writable in blocking mode");
+                HLOGC(gslog.Debug, log << "grp/sendMultilink: will block for " << m_iSndTimeOut << " - waiting for any writable in blocking mode");
                 swait_timeout = m_iSndTimeOut;
             }
 
@@ -1551,7 +1558,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
             }
 
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: RDY: " << DisplayEpollResults(sready));
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: RDY: " << DisplayEpollResults(sready));
 
             // sockets in EX: should be moved to wipeme.
             // IMPORTANT: we check only PENDING sockets (not blocked) because only
@@ -1563,7 +1570,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
                 if (CEPoll::isready(sready, *i, SRT_EPOLL_ERR))
                 {
                     HLOGC(gslog.Debug,
-                          log << "grp/sendBroadcast: Socket @" << (*i) << " reported FAILURE - moved to wiped.");
+                          log << "grp/sendMultilink: Socket @" << (*i) << " reported FAILURE - moved to wiped.");
                     // Failed socket. Move d to wipeme. Remove from eid.
                     wipeme.push_back(*i);
                     int no_events = 0;
@@ -1599,7 +1606,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
 
     // }
 
-    // { sendBroadcast_CheckBlockedLinks()
+    // { sendMultilink_CheckBlockedLinks()
 
     // Alright, we've made an attempt to send a packet over every link.
     // Every operation was done through a non-blocking attempt, so
@@ -1629,7 +1636,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             InvertedLock ung (m_GroupLock);
             enterCS(CUDT::uglobal().m_GlobControlLock);
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: Locked GlobControlLock, locking back GroupLock");
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: Locked GlobControlLock, locking back GroupLock");
         }
 
         // Under this condition, as an unlock-lock cycle was done on m_GroupLock,
@@ -1686,7 +1693,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
     // Re-check after the waiting lock has been reacquired
     if (m_bClosing)
     {
-        HLOGC(gslog.Debug, log << "grp/sendBroadcast: GROUP CLOSED, ABANDONING");
+        HLOGC(gslog.Debug, log << "grp/sendMultilink: GROUP CLOSED, ABANDONING");
         throw CUDTException(MJ_CONNECTION, MN_CONNLOST, 0);
     }
 
@@ -1726,7 +1733,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
             throw CUDTException(MJ_AGAIN, MN_WRAVAIL, 0);
         }
 
-        HLOGC(gslog.Debug, log << "grp/sendBroadcast: all blocked, trying to common-block on epoll...");
+        HLOGC(gslog.Debug, log << "grp/sendMultilink: all blocked, trying to common-block on epoll...");
 
         // XXX TO BE REMOVED. Sockets should be subscribed in m_SndEID at connecting time
         // (both srt_connect and srt_accept).
@@ -1748,7 +1755,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             // Lift the group lock for a while, to avoid possible deadlocks.
             InvertedLock ug(m_GroupLock);
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: blocking on any of blocked sockets to allow sending");
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: blocking on any of blocked sockets to allow sending");
 
             // m_iSndTimeOut is -1 by default, which matches the meaning of waiting forever
             THREAD_PAUSED();
@@ -1856,12 +1863,12 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         m_Global.m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_OUT, false);
         if (!m_bSynSending && (is_pending_blocked || was_blocked))
         {
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: no links are ready for sending");
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: no links are ready for sending");
             ercode = SRT_EASYNCSND;
         }
         else
         {
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: all links broken (none succeeded to send a payload)");
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: all links broken (none succeeded to send a payload)");
             m_Global.m_EPoll.update_events(id(), m_sPollID, SRT_EPOLL_ERR, true);
         }
 
@@ -1882,7 +1889,7 @@ int CUDTGroup::sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc)
         {
             // This only sets the state to the socket; the GC process should
             // pick it up at the next time.
-            HLOGC(gslog.Debug, log << "grp/sendBroadcast: per PARTIAL SUCCESS, closing failed @" << is->id);
+            HLOGC(gslog.Debug, log << "grp/sendMultilink: per PARTIAL SUCCESS, closing failed @" << is->id);
             is->mb->ps->setBrokenClosed();
         }
     }
@@ -2813,7 +2820,8 @@ private:
 
         std::string str_tnow = FormatTimeSys(steady_clock::now());
         str_tnow.resize(str_tnow.size() - 7); // remove trailing ' [SYST]' part
-        while (str_tnow.find(':') != std::string::npos) {
+        while (str_tnow.find(':') != std::string::npos)
+        {
             str_tnow.replace(str_tnow.find(':'), 1, 1, '_');
         }
         const std::string fname = "stability_trace_" + str_tnow + ".csv";
@@ -4142,6 +4150,7 @@ int CUDTGroup::sendBackupRexmit(CUDT& core, SRT_MSGCTRL& w_mc)
     return stat;
 }
 
+// XXX DEAD CODE.
 // [[using locked(CUDTGroup::m_GroupLock)]];
 void CUDTGroup::ackMessage(int32_t msgno)
 {

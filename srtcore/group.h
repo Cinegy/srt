@@ -36,6 +36,7 @@ class CUDTGroup
 
     typedef sync::steady_clock::time_point time_point;
     typedef sync::steady_clock::duration   duration;
+    typedef sync::AtomicDuration<sync::steady_clock> atomic_duration;
     typedef sync::steady_clock             steady_clock;
     typedef groups::SocketData SocketData;
     typedef groups::SendBackupCtx SendBackupCtx;
@@ -148,7 +149,9 @@ public:
     }
 
     // NEED LOCKING
+    SRT_TSA_NEEDS_LOCKED(m_GroupLock)
     gli_t begin() { return m_Group.begin(); }
+    SRT_TSA_NEEDS_LOCKED(m_GroupLock)
     gli_t end() { return m_Group.end(); }
 
     /// Remove the socket from the group container.
@@ -238,8 +241,9 @@ public:
     void setGroupConnected();
 
     int            send(const char* buf, int len, SRT_MSGCTRL& w_mc);
-    int            sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc);
+    int sendBroadcast(const char* buf, int len, SRT_MSGCTRL& w_mc);
     int            sendBackup(const char* buf, int len, SRT_MSGCTRL& w_mc);
+    int            sendMultilink(const char* buf, int len, SRT_MSGCTRL& w_mc, bool use_select);
     static int32_t generateISN();
 
 private:

@@ -16,11 +16,12 @@ Written by
 #ifndef INC_SRT_GROUP_COMMON_H
 #define INC_SRT_GROUP_COMMON_H
 
+#include <deque>
+#include <list>
+
 #include "srt.h"
 #include "common.h"
 #include "core.h"
-
-#include <list>
 
 namespace srt
 {
@@ -51,7 +52,7 @@ namespace groups
         int64_t        pktSndDropTotal;
     };
 
-    SocketData prepareSocketData(CUDTSocket* s);
+    SocketData prepareSocketData(CUDTSocket* s, SRT_GROUP_TYPE type);
 
     typedef std::list<SocketData> group_t;
     typedef group_t::iterator     gli_t;

@@ -113,6 +113,18 @@ bool PacketFilter::Internal::CheckFilterCompat(SrtFilterConfig& w_agent, const S
 }
 
 /*
+   // MOVED to CORE
+struct SortBySequence
+{
+    bool operator()(const CUnit* u1, const CUnit* u2)
+    {
+        int32_t s1 = u1->m_Packet.getSeqNo();
+        int32_t s2 = u2->m_Packet.getSeqNo();
+
+        return CSeqNo::seqcmp(s1, s2) < 0;
+    }
+};
+
 void PacketFilter::receive(CUnit* unit, std::vector<CUnit*>& w_incoming, loss_seqs_t& w_loss_seqs)
 {
     const CPacket& rpkt = unit->m_Packet;

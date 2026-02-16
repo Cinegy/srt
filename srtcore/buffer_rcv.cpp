@@ -519,7 +519,7 @@ int CRcvBuffer::dropMessage(int32_t seqnolo, int32_t seqnohi, int32_t msgno, Dro
                                   << m_iStartSeqNo);
     if (msgno < 0) // Note that only SRT_MSGNO_CONTROL is allowed in the protocol.
     {
-        HLOGC(rbuflog.Error, log << "EPE: received UMSG_DROPREQ with msgflag field set to a negative value!");
+        LOGC(rbuflog.Error, log << "EPE: received UMSG_DROPREQ with msgflag field set to a negative value!");
     }
 
     // Drop by packet seqno range to also wipe those packets that do not exist in the buffer.
@@ -527,7 +527,7 @@ int CRcvBuffer::dropMessage(int32_t seqnolo, int32_t seqnohi, int32_t msgno, Dro
     const int offset_b = SeqNo(seqnohi) - m_iStartSeqNo;
     if (offset_b < 0)
     {
-        LOGC(rbuflog.Debug, log << "CRcvBuffer.dropMessage(): nothing to drop. Requested [" << seqnolo << "; "
+        HLOGC(rbuflog.Debug, log << "CRcvBuffer.dropMessage(): nothing to drop. Requested [" << seqnolo << "; "
             << seqnohi << "]. Buffer start " << m_iStartSeqNo.val() << ".");
         return 0;
     }
@@ -685,7 +685,7 @@ bool CRcvBuffer::getContiguousEnd(int32_t& w_seq) const
     return (m_iEndOff < m_iMaxPosOff);
 }
 
-int CRcvBuffer::readMessage(char* data, size_t len, SRT_MSGCTRL* msgctrl, pair<int32_t, int32_t>* pw_seqrange)
+int CRcvBuffer::readMessage(char* data, size_t len, SRT_MSGCTRL& w_msgctrl, pair<int32_t, int32_t>* pw_seqrange)
 {
     const bool canReadInOrder = hasReadableInorderPkts();
     if (!canReadInOrder && m_iFirstNonOrderMsgPos == CPos_TRAP)
@@ -752,16 +752,15 @@ int CRcvBuffer::readMessage(char* data, size_t len, SRT_MSGCTRL* msgctrl, pair<i
             --m_numNonOrderPackets;
 
         const bool pbLast  = packet.getMsgBoundary() & PB_LAST;
-        if (msgctrl && (packet.getMsgBoundary() & PB_FIRST))
+        if (packet.getMsgBoundary() & PB_FIRST)
         {
-            msgctrl->msgno  = packet.getMsgSeq(m_bPeerRexmitFlag);
+            w_msgctrl.msgno  = packet.getMsgSeq(m_bPeerRexmitFlag);
         }
-        if (msgctrl && pbLast)
+        if (pbLast)
         {
-            msgctrl->srctime = count_microseconds(getPktTsbPdTime(packet.getMsgTimeStamp()).time_since_epoch());
+            w_msgctrl.srctime = count_microseconds(getPktTsbPdTime(packet.getMsgTimeStamp()).time_since_epoch());
         }
-        if (msgctrl)
-            msgctrl->pktseq = pktseqno;
+        w_msgctrl.pktseq = pktseqno;
 
         releaseUnitAt(i);
         if (isReadingFromStart)
@@ -1211,6 +1210,66 @@ int CRcvBuffer::releaseNextFillerEntries()
     // Drop off will be updated after that call, if needed.
     m_iDropOff = 0;
 
+    // XXX Not sure if this code has any chance to get executed, but then
+    // the message consistency can not be really ensured if we also need to
+    // rely on the other party that the dropped message sequence number really
+    // corresponds to the message identity. Treat this as EPE-prevention.
+
+    // If it happened that after removal of the dropped packets the
+    // VERY FIRST packet doesn't have PB_FIRST flag (e.g. it's a scrapped
+    // message), remove all packets belonging to that message.
+    if (m_iMaxPosOff
+            && m_entries[m_iStartPos].pUnit
+            && m_entries[m_iStartPos].status == EntryState_Avail
+            && (packetAt(m_iStartPos).getMsgBoundary() & PB_FIRST) == 0)
+    {
+        const int32_t msgno = packetAt(m_iStartPos).getMsgSeq();
+
+        const CPos end_pos = incPos(m_iStartPos, m_iMaxPosOff);
+        CPos next_pos = incPos(m_iStartPos, 1);
+        ++nskipped;
+
+        m_iStartSeqNo = m_iStartSeqNo.inc();
+        releaseUnitAt(m_iStartPos);
+        m_iStartPos = next_pos;
+
+        // Delete only contiguous packets. Empty cell may potentially
+        // be a packet of a different message, so keep it.
+
+        // We believe that this will end after a few items and never reach end_pos
+        for (CPos i = next_pos; i != end_pos; i = next_pos)
+        {
+            // Keep that value for convenience.
+            next_pos = incPos(i);
+
+            // Empty cell - keep it.
+            // NOTE: Dropped cells should have been removed already,
+            // and we state that a dropped cell cannot follow the valid cell.
+            if (!m_entries[i].pUnit)
+                break;
+
+            const CPacket& pkt = packetAt(i);
+
+            // Different message - keep it.
+            if (pkt.getMsgSeq() != msgno)
+                break;
+
+            ++nskipped;
+
+            m_iStartSeqNo = m_iStartSeqNo.inc();
+            releaseUnitAt(i);
+            m_iStartPos = next_pos;
+            --m_iMaxPosOff;
+
+            // You might have reached also the last one,
+            // while having that message id.
+            if ((pkt.getMsgBoundary() & PB_LAST) != 0)
+            {
+                break;
+            }
+        }
+    }
+
     return nskipped;
 }
 
@@ -1225,11 +1284,17 @@ void CRcvBuffer::updateNonreadPos()
     CPos pos = m_iFirstNonreadPos;
     while (m_entries[pos].pUnit && m_entries[pos].status == EntryState_Avail)
     {
+        // Message API AND packet at [m_iFirstNonreadPos] is PB_SUBSEQUENT or PB_LAST.
         if (m_bMessageAPI && (packetAt(pos).getMsgBoundary() & PB_FIRST) == 0)
             break;
 
+        // Continue the OUTER loop, when
+        // - There is an AVAIL unit at the [m_iFirstNonreadPos] cell
+        // - [m_iFirstNonreadPos] has set PB_FIRST (also PB_SOLO)
+
         for (CPos i = pos; i != end_pos; i = incPos(i))
         {
+            // Reach the end_pos or the end of sequence of available packets
             if (!m_entries[i].pUnit || m_entries[pos].status != EntryState_Avail)
             {
                 break;
@@ -1688,6 +1753,43 @@ void CRcvBuffer::SingleCondenser::acquire(CRcvBuffer::UnitHandle& w_u)
 #else
     muxers_pool->makeUnitTaken(w_u);
 #endif
+}
+
+void CRcvBuffer::getUnitSeriesInfo(int32_t fromseq, size_t maxsize, std::vector<int32_t>& w_sources)
+{
+    const int offset = SeqNo(fromseq) - m_iStartSeqNo;
+
+    // Check if it's still inside the buffer
+    if (offset < 0 || offset >= m_iMaxPosOff)
+        return;
+
+    // All you need to do is to check if there's a valid packet
+    // at given position
+    size_t pass = 0;
+    for (int off = offset; off < m_iMaxPosOff; ++off)
+    {
+        int pos = incPos(m_iStartPos, off);
+        if (m_entries[pos].pUnit)
+        {
+            w_sources.push_back(m_entries[pos].muxID);
+            ++pass;
+            if (pass == maxsize)
+                break;
+        }
+    }
+}
+
+std::string CRcvBuffer::Entry::debug()
+{
+    static const char* const state_names[4] = {"EMPTY", "AVAIL", "READ", "DROPPED"};
+    using namespace hvu;
+
+    const char* stat = "INVALID";
+
+    if (int(status) >= 0 && int(status) <= 3)
+        stat = state_names[status];
+
+    return fmtcat(stat, ": ", pUnit ? pUnit->m_Packet.Info() : string("(no packet)"));
 }
 
 } // namespace srt

@@ -95,18 +95,18 @@ void CSndLossList::traceState() const
     traceState(std::cout) << "\n";
 }
 
-int CSndLossList::insert(int32_t seqno1, int32_t seqno2)
+int CSndLossList::insert(int32_t seqlo, int32_t seqhi)
 {
-    if (seqno1 < 0 || seqno2 < 0 ) {
-        LOGC(qslog.Error, log << "IPE: Tried to insert negative seqno " << seqno1 << ":" << seqno2
+    if (seqlo < 0 || seqhi < 0 ) {
+        LOGC(qslog.Error, log << "IPE: Tried to insert negative seqno " << seqlo << ":" << seqhi
             << " into sender's loss list. Ignoring.");
         return 0;
     }
 
-    const int inserted_range = CSeqNo::seqlen(seqno1, seqno2);
+    const int inserted_range = CSeqNo::seqlen(seqlo, seqhi);
     if (inserted_range <= 0 || inserted_range >= m_iSize) {
         LOGC(qslog.Error, log << "IPE: Tried to insert too big range of seqno: " << inserted_range <<  ". Ignoring. "
-                << "seqno " << seqno1 << ":" << seqno2);
+                << "seqno " << seqlo << ":" << seqhi);
         return 0;
     }
 
@@ -114,19 +114,19 @@ int CSndLossList::insert(int32_t seqno1, int32_t seqno2)
 
     if (m_iLength == 0)
     {
-        insertHead(0, seqno1, seqno2);
+        insertHead(0, seqlo, seqhi);
         return m_iLength;
     }
 
     // Find the insert position in the non-empty list
     const int origlen = m_iLength;
-    const int offset  = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqno1);
+    const int offset  = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqlo);
 
     if (offset >= m_iSize)
     {
         LOGC(qslog.Error, log << "IPE: New loss record is too far from the first record. Ignoring. "
                 << "First loss seqno " << m_caSeq[m_iHead].seqstart
-                << ", insert seqno " << seqno1 << ":" << seqno2);
+                << ", insert seqno " << seqlo << ":" << seqhi);
         return 0;
     }
 
@@ -134,68 +134,68 @@ int CSndLossList::insert(int32_t seqno1, int32_t seqno2)
 
     if (loc < 0)
     {
-        const int offset_seqno2 = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqno2);
-        const int loc_seqno2    = (m_iHead + offset_seqno2 + m_iSize) % m_iSize;
+        const int offset_seqhi = CSeqNo::seqoff(m_caSeq[m_iHead].seqstart, seqhi);
+        const int loc_seqhi    = (m_iHead + offset_seqhi + m_iSize) % m_iSize;
 
-        if (loc_seqno2 < 0)
+        if (loc_seqhi < 0)
         {
             // The size of the CSndLossList should be at least the size of the flow window.
             // It means that all the packets sender has sent should fit within m_iSize.
             // If the new loss does not fit, there is some error.
             LOGC(qslog.Error, log << "IPE: New loss record is too old. Ignoring. "
                 << "First loss seqno " << m_caSeq[m_iHead].seqstart
-                << ", insert seqno " << seqno1 << ":" << seqno2);
+                << ", insert seqno " << seqlo << ":" << seqhi);
             return 0;
         }
 
-        loc = loc_seqno2;
+        loc = loc_seqhi;
     }
 
     if (offset < 0)
     {
-        insertHead(loc, seqno1, seqno2);
+        insertHead(loc, seqlo, seqhi);
     }
     else if (offset > 0)
     {
-        if (seqno1 == m_caSeq[loc].seqstart)
+        if (seqlo == m_caSeq[loc].seqstart)
         {
-            const bool updated = updateElement(loc, seqno1, seqno2);
+            const bool updated = updateElement(loc, seqlo, seqhi);
             if (!updated)
                 return 0;
         }
         else
         {
             // Find the prior node.
-            // It should be the highest sequence number less than seqno1.
+            // It should be the highest sequence number less than seqlo.
             // 1. Start the search either from m_iHead, or from m_iLastInsertPos
             int i = m_iHead;
-            if ((m_iLastInsertPos != -1) && (CSeqNo::seqcmp(m_caSeq[m_iLastInsertPos].seqstart, seqno1) < 0))
+            if ((m_iLastInsertPos != -1) && (CSeqNo::seqcmp(m_caSeq[m_iLastInsertPos].seqstart, seqlo) < 0))
                 i = m_iLastInsertPos;
 
-            // 2. Find the highest sequence number less than seqno1.
-            while (m_caSeq[i].inext != -1 && CSeqNo::seqcmp(m_caSeq[m_caSeq[i].inext].seqstart, seqno1) < 0)
+            // 2. Find the highest sequence number less than seqlo.
+            while (m_caSeq[i].inext != -1 && CSeqNo::seqcmp(m_caSeq[m_caSeq[i].inext].seqstart, seqlo) < 0)
                 i = m_caSeq[i].inext;
 
-            // 3. Check if seqno1 overlaps with (seqbegin, seqend)
+            // 3. Check if seqlo overlaps with (seqbegin, seqend)
             const int seqend = m_caSeq[i].seqend == SRT_SEQNO_NONE ? m_caSeq[i].seqstart : m_caSeq[i].seqend;
 
-            if (CSeqNo::seqcmp(seqend, seqno1) < 0 && CSeqNo::incseq(seqend) != seqno1)
+            if (CSeqNo::seqcmp(seqend, seqlo) < 0 && CSeqNo::incseq(seqend) != seqlo)
             {
                 // No overlap
                 // TODO: Here we should actually insert right after i, not at loc.
-                insertAfter(loc, i, seqno1, seqno2);
+                insertAfter(loc, i, seqlo, seqhi);
             }
             else
             {
-                // TODO: Replace with updateElement(i, seqno1, seqno2).
+                // TODO: Replace with updateElement(i, seqlo, seqhi).
                 // Some changes to updateElement(..) are required.
                 m_iLastInsertPos = i;
-                if (CSeqNo::seqcmp(seqend, seqno2) >= 0)
+                if (CSeqNo::seqcmp(seqend, seqhi) >= 0)
                     return 0;
 
                 // overlap, coalesce with prior node, insert(3, 7) to [2, 5], ... becomes [2, 7]
-                m_iLength += CSeqNo::seqlen(seqend, seqno2) - 1;
-                m_caSeq[i].seqend = seqno2;
+                m_iLength += CSeqNo::seqlen(seqend, seqhi) - 1;
+                m_caSeq[i].seqend = seqhi;
 
                 loc = i;
             }
@@ -203,7 +203,7 @@ int CSndLossList::insert(int32_t seqno1, int32_t seqno2)
     }
     else // offset == 0, loc == m_iHead
     {
-        const bool updated = updateElement(m_iHead, seqno1, seqno2);
+        const bool updated = updateElement(m_iHead, seqlo, seqhi);
         if (!updated)
             return 0;
     }
