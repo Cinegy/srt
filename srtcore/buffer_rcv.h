@@ -497,7 +497,7 @@ public:
 
         // Pass the unit back to the collector. In case when the collector
         // is not accessible, drop it on the floor (delete).
-        virtual void condense(UnitHandle& unit) = 0;
+        virtual bool condense(UnitHandle& unit) = 0;
 
         virtual ~Condenser();
     };
@@ -509,7 +509,7 @@ public:
         SingleCondenser(CMultiplexer* muxer);
         SingleCondenser(UnitQueue* q); // FOR TESTING ONLY
 
-        virtual void condense(UnitHandle& unit) ATR_OVERRIDE;
+        virtual bool condense(UnitHandle& unit) ATR_OVERRIDE;
         virtual void acquire(UnitHandle& unit) ATR_OVERRIDE;
     };
 
@@ -519,7 +519,7 @@ public:
     public:
         GroupCondenser(CUDTGroup* g);
 
-        virtual void condense(UnitHandle& unit) ATR_OVERRIDE;
+        virtual bool condense(UnitHandle& unit) ATR_OVERRIDE;
         virtual void acquire(UnitHandle& unit) ATR_OVERRIDE;
     };
 
@@ -764,7 +764,7 @@ public:
 
     // Remove everything that is currently in the buffer
     // and shift the earliest sequence number past the last one.
-    void clear();
+    std::pair<int, int> clear();
 
 public: // Used for testing
     /// Peek unit in position of seqno
@@ -910,7 +910,11 @@ private:
     struct Entry
     {
         Entry()
+#if USE_RECEIVER_UNIT_POOL
+            : pUnit()
+#else
             : pUnit(NULL)
+#endif
             , muxID(-1)
             , status(EntryState_Empty)
         {}
@@ -923,7 +927,7 @@ private:
 
     void acquireUnitAt(CPos position, UnitHandle& unit);
     void releaseUnitAt(CPos position);
-    void releaseUnit(Entry&);
+    bool releaseUnit(Entry&);
 
     typedef FixedArray<Entry> entries_t;
     entries_t m_entries;

@@ -70,6 +70,8 @@ using namespace hvu; // ThreadName
 namespace srt
 {
 
+#if ! USE_RECEIVER_UNIT_POOL
+
 CUnitQueue::CUnitQueue(int initNumUnits, int mss)
     : m_iNumTaken(0)
     , m_iMSS(mss)
@@ -208,7 +210,7 @@ void CUnitQueue::makeUnitTaken(CUnit* unit)
     unit->m_bTaken.store(true);
 }
 
-#if USE_RECEIVER_UNIT_POOL
+#else
 
 void CPacketUnitPool::allocateOneSeries(UnitContainer& w_series, size_t series_size, size_t unit_size)
 {
@@ -232,6 +234,8 @@ bool CPacketUnitPool::retrieveSeries(UnitContainer& series)
     {
         if (limitsExceeded())
         {
+            HLOGC(qrlog.Debug, log << "CPacketUnitPool: retrieval denied: SIZE LIMIT " << m_zMaxMemory << " EXCEEDED: "
+                    << occupiedMemory() << " from " << m_Series.size() << "S * " << m_zUnitSize << "U");
             return false;
         }
         size_t series_size = m_zSeriesSize;
@@ -239,6 +243,8 @@ bool CPacketUnitPool::retrieveSeries(UnitContainer& series)
 
         // We don't need access to internal data since here.
         lk.unlock();
+
+        HLOGC(qrlog.Debug, log << "CPacketUnitPool: no spare storage - ALLOCATE one series (" << m_zSeriesSize << "pkt) from system");
 
         // Allocate directly to the target vector.
         // You'll get them back here when they are recycled.
@@ -249,6 +255,9 @@ bool CPacketUnitPool::retrieveSeries(UnitContainer& series)
     // At least one element, take the last one.
     std::swap(m_Series.back(), series);
     m_Series.pop_back();
+
+    HLOGC(qrlog.Debug, log << "CPacketUnitPool: getting spare storage with " << m_zSeriesSize << "pkt - remaining "
+            << m_Series.size() << " series");
     return true;
 }
 
@@ -258,22 +267,31 @@ void CPacketUnitPool::returnUnit(UnitPtr& returned_entry)
     m_RecycledUnits.push_back(UnitPtr());
     m_RecycledUnits.back().swap(returned_entry);
 
-    updateSeries();
-}
+    --m_ShippedStats;
+    if (m_ShippedStats <= 0)
+        m_ShippedStats = 0;
 
-void CPacketUnitPool::updateSeries()
-{
     // Check if you have enough recycled units, and if so,
     // fold them into the series container
     if (m_RecycledUnits.size() >= m_zSeriesSize)
     {
         // NOTE ORDER: LowerLock, UpperLock
-        ScopedLock lk (m_UpperLock);
+        ScopedLock lkup (m_UpperLock);
         m_Series.push_back(UnitContainer());
         UnitContainer& newser = m_Series.back();
         newser.swap(m_RecycledUnits);
+        m_RecycledUnits.reserve(m_zSeriesSize);
+
+        HLOGC(qrlog.Debug, log << "CPacketUnitPool: CONDENSED UNIT, lifted up a new series of " << m_zSeriesSize
+                << " packets, total " << m_Series.size() << " available");
+    }
+    else
+    {
+        HLOGC(qrlog.Debug, log << "CPacketUnitPool: CONDENSED UNIT, still " << (m_zSeriesSize - m_RecycledUnits.size()) << "/"
+                << m_zSeriesSize << " to consolidate");
     }
 }
+
 
 // This should check if there are any excessive
 // recycled blocks, and deletes them.
@@ -298,6 +316,46 @@ void CPacketUnitPool::updateLimits()
     {
         std::vector<UnitContainer>::iterator new_end = m_Series.begin() + max_series;
         m_Series.erase(new_end, m_Series.end());
+    }
+}
+
+// XXX likely stuff to remove, but stats are needed
+void CPacketUnitPool::declareShipped()
+{
+    // Trying to avoid using += and -= for atomics
+    // This will spin until it happened that the value didn't get changed between steps
+    bool passed;
+    do
+    {
+        int old_val = m_ShippedStats;
+        passed = m_ShippedStats.compare_exchange(old_val, old_val + m_zSeriesSize);
+    } while (!passed);
+}
+
+void CPacketUnitPool::declareForgotten(int number_packets)
+{
+    bool passed;
+    do
+    {
+        int old_val = m_ShippedStats;
+        int new_val = old_val - number_packets;
+        if (new_val < 0)
+            new_val = 0;
+        passed = m_ShippedStats.compare_exchange(old_val, new_val);
+    } while (!passed);
+}
+
+CPacketUnitPool::UnitSeries::~UnitSeries()
+{
+    HLOGC(qrlog.Debug, log << "CPacketUnitPool: DELETING series of " << units.size() << " packets");
+}
+
+CPacketUnitPool::UnitPtr:: ~UnitPtr()
+{
+    if (owns)
+    {
+        HLOGC(qrlog.Debug, log << "CPacketUnitPool: DELETING a unit (returning to the system)");
+        delete ptr;
     }
 }
 
@@ -1109,12 +1167,12 @@ CRcvQueue::CRcvQueue(CMultiplexer* parent):
     m_parent(parent),
     m_WorkerThread(),
 #if USE_RECEIVER_UNIT_POOL
-    m_pUnitPool(NULL),
+    m_pUnitPool(),
 #else
     m_pUnitQueue(NULL),
 #endif
     m_pChannel(NULL),
-    m_szPayloadSize(),
+    m_zPayloadSize(),
     m_bClosing(false),
     m_mBuffer(),
     m_BufferCond()
@@ -1182,20 +1240,23 @@ bool CRcvQueue::refillUnits()
     if (!m_UnitSeries.units.empty())
         return true;
 
-    return m_UnitSeries.retrieveFrom(*m_pUnitPool);
+    HLOGC(qrlog.Debug, log << "CRcvQueue: refilling unit series");
+    return m_UnitSeries.retrieveFrom((*m_pUnitPool));
 }
 
-bool CRcvQueue::retrieveUnit(CPacketUnitPool::UnitPtr& to, bool checked = false)
+bool CRcvQueue::retrieveUnit(CPacketUnitPool::UnitPtr& to, bool checked)
 {
     if (!checked && !refillUnits())
         return false;
 
     m_UnitSeries.popBackTo(to);
+    HLOGC(qrlog.Debug, log << "CRcvQueue: retrieved one packet unit from series, remaining " << m_UnitSeries.units.size());
     return true;
 }
 
 CPacketUnitPool::Unit* CRcvQueue::viewUnit()
 {
+    HLOGC(qrlog.Debug, log << "CRcvQueue: unit view requested");
     if (!refillUnits())
         return NULL;
 
@@ -1203,13 +1264,15 @@ CPacketUnitPool::Unit* CRcvQueue::viewUnit()
 }
 #endif
 
-void CRcvQueue::init(int qsize, size_t payload, CChannel* cc)
+void CRcvQueue::init(int series_size, size_t payload, CChannel* cc)
 {
-    m_szPayloadSize = payload;
+    m_zPayloadSize = payload;
 
 #if USE_RECEIVER_UNIT_POOL
 
-    m_pUnitPool.reset(new CPacketUnitPool(payload, qsize));
+    // Normally this 128 is used here, but 32 would be a bit better
+    // as a single-shot resolution.
+    m_pUnitPool.reset(new CPacketUnitPool(series_size, payload));
 
     // XXX This is initial, so should work, but formally the exit
     // code should be checked.
@@ -1217,7 +1280,7 @@ void CRcvQueue::init(int qsize, size_t payload, CChannel* cc)
 
 #else
     SRT_ASSERT(m_pUnitQueue == NULL);
-    m_pUnitQueue = new CUnitQueue(qsize, (int)payload);
+    m_pUnitQueue = new CUnitQueue(series_size, (int)payload);
 #endif
 
     m_pChannel = cc;
@@ -1326,7 +1389,7 @@ void CRcvQueue::worker()
 EReadStatus CRcvQueue::worker_DropIncomingPacket(sockaddr_any& w_addr)
 {
     CPacket temp;
-    temp.allocate(m_szPayloadSize);
+    temp.allocate(m_zPayloadSize);
     THREAD_PAUSED();
     EReadStatus rst = m_pChannel->recvfrom((w_addr), (temp));
     THREAD_RESUMED();
@@ -1395,11 +1458,7 @@ EReadStatus CRcvQueue::worker_RetrieveAndProcessUnit(EConnectStatus& w_cst, cons
 
     sockaddr_any sa(m_parent->selfAddr().family());
 #if USE_RECEIVER_UNIT_POOL
-    // NOTE: refillUnits might actually not allocate units,
-    // so the result of viewBack() should be still checked.
-    refillUnits();
-
-    CPacketUnitPool::Unit* unit = m_UnitSeries.viewBack();
+    CPacketUnitPool::Unit* unit = viewUnit();
 #else
     CUnit* unit = m_pUnitQueue->getNextAvailUnit();
 #endif
@@ -1409,7 +1468,7 @@ EReadStatus CRcvQueue::worker_RetrieveAndProcessUnit(EConnectStatus& w_cst, cons
         return worker_DropIncomingPacket((sa));
     }
 
-    unit->m_Packet.setLength(m_szPayloadSize);
+    unit->m_Packet.setLength(m_zPayloadSize);
 
     // reading next incoming packet, recvfrom returns -1 is nothing has been received
     THREAD_PAUSED();
@@ -1934,6 +1993,7 @@ bool CMultiplexer::deleteSocket(SRTSOCKET id)
 
     // Remove from the Update Lists, if present
     CUDTSocket* s = point->m_pSocket;
+    s->forgetReceiverPackets();
 
     // Remove from maps and list
     m_UpdateOrderList.erase(point);
@@ -1952,6 +2012,11 @@ bool CMultiplexer::deleteSocket(SRTSOCKET id)
     --m_zSockets;
     HLOGC(qmlog.Debug, log << "deleteSocket: MUXER id=" << m_iID << " removed @" << id << " (remaining " << m_zSockets << ")");
     return true;
+}
+
+void CMultiplexer::forgetReceiverUnits(size_t size)
+{
+    m_RcvQueue.m_pUnitPool->declareForgotten(size);
 }
 
 /// Find a mapped CUDTSocket whose id is @a id.

@@ -179,19 +179,19 @@ public:
 
     // In the beginning it's initialized as first, builtin default.
     // Still, it will be created only when requested.
-    PacketFilter(): m_filter(), m_parent(), m_sndctlpkt(0), m_unitq() {}
+    PacketFilter(): m_filter(), m_parent(), m_sndctlpkt(0) /*, m_unitq()*/ {}
 
     // Copy constructor - important when listener-spawning
     // Things being done:
     // 1. The filter is individual, so don't copy it. Set NULL.
     // 2. This will be configured anyway basing on possibly a new rule set.
-    PacketFilter(const PacketFilter& source SRT_ATR_UNUSED): m_filter(), m_parent(), m_sndctlpkt(0), m_unitq() {}
+    PacketFilter(const PacketFilter& source SRT_ATR_UNUSED): m_filter(), m_parent(), m_sndctlpkt(0) /*, m_unitq()*/ {}
 
     // This function will be called by the parent CUDT
     // in appropriate time. It should select appropriate
     // filter basing on the value in selector, then
     // pin oneself in into CUDT for receiving event signals.
-    bool configure(CUDT* parent, CUnitQueue* uq, const std::string& confstr);
+    bool configure(CUDT* parent, const std::string& confstr);
 
     static bool correctConfig(const SrtFilterConfig& c);
 
@@ -225,7 +225,7 @@ protected:
     SrtPacket m_sndctlpkt;
 
     // Receiver part
-    CUnitQueue* m_unitq;
+    // NOT USED - see provide() -- CUnitQueue* m_unitq;
     std::vector<SrtPacket> m_provided;
 };
 

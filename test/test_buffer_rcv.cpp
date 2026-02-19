@@ -28,7 +28,7 @@ protected:
     void SetUp() override
     {
         // make_unique is unfortunately C++14
-        m_unit_queue.reset(new CUnitQueue(m_buff_size_pkts, 1500));
+        m_unit_queue.reset(new CRcvBuffer::UnitQueue(m_buff_size_pkts, 1500));
         ASSERT_NE(m_unit_queue.get(), nullptr);
 
         const bool enable_msg_api = m_use_message_api;
@@ -58,8 +58,22 @@ public:
 
     int addPacket(int32_t seqno, int msgno, PacketBoundary bound, bool out_of_order = false, int ts = 0)
     {
+#if USE_RECEIVER_UNIT_POOL
+        // NOTE: Here we dcn't use viewBack() because this is only done in
+        // case when you want to "borrow" the unit and you don't know yet
+        // if this is to be taken over. Here we know for sure that we extract
+        // a unit exactly for that purpose, so we need to extract it now.
+
+        CPacketUnitPool::UnitPtr unit;
+        if (m_unit_series.units.empty())
+        {
+            EXPECT_TRUE(m_unit_series.retrieveFrom(*m_unit_queue));
+        }
+        m_unit_series.popBackTo((unit));
+#else
         CUnit* unit = m_unit_queue->getNextAvailUnit();
         EXPECT_NE(unit, nullptr);
+#endif
 
         CPacket& packet = unit->m_Packet;
         packet.set_seqno(seqno);
@@ -76,7 +90,7 @@ public:
             EXPECT_TRUE(packet.getMsgOrderFlag());
         }
 
-        auto info = m_rcv_buffer->insert(unit, -1);
+        auto info = m_rcv_buffer->insert((unit), -1);
         // XXX extra checks?
 
         return int(info.result);
@@ -134,7 +148,10 @@ public:
     }
 
 protected:
-    unique_ptr<CUnitQueue> m_unit_queue;
+    unique_ptr<CRcvBuffer::UnitQueue> m_unit_queue;
+#if USE_RECEIVER_UNIT_POOL
+    CPacketUnitPool::UnitSeries m_unit_series;
+#endif
     unique_ptr<CRcvBuffer> m_rcv_buffer;
     const int m_buff_size_pkts = 16;
     const int m_init_seqno = 1000;
@@ -965,7 +982,7 @@ TEST(CPacketUnitPool, Basic)
 {
     srt::TestInit tini;
 
-    CPacketUnitPool upool (1456, 32);
+    CPacketUnitPool upool (32, 1456);
 
     upool.setMaxBytes(1456 * 128);
 

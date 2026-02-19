@@ -63,7 +63,7 @@ modified by
 #include <queue>
 #include <vector>
 
-#define USE_RECEIVER_UNIT_POOL 0
+#define USE_RECEIVER_UNIT_POOL 1
 
 namespace srt
 {
@@ -167,7 +167,7 @@ public:
     struct UnitPtr
     {
         Unit* ptr;
-        bool owns; // use the trick from the old auto_ptr
+        mutable bool owns; // use the trick from the old auto_ptr
         UnitPtr(): ptr(NULL), owns(false) {}
 
         Unit* operator->() { return ptr; }
@@ -183,11 +183,7 @@ public:
             owns = true;
         }
 
-        ~UnitPtr()
-        {
-            if (owns)
-                delete ptr;
-        }
+        ~UnitPtr();
 
         void swap(UnitPtr& theOther)
         {
@@ -195,16 +191,39 @@ public:
             std::swap(owns, theOther.owns);
         }
 
-        // COPY CONSTRUCTOR: copy the pointer, but do not own it,
-        // regardless if the victim owns ot or not. This is only
-        // a sealup for cases when an empty object needs to be added
-        // to the container or copy-from-empty-constructed-object
-        // is required. If passing the ownership is required, use swap().
+        // This model was used in the first version of std::auto_ptr; this way
+        // after copying, the ownership was transferred, but the old object kept
+        // the pointer (as weak). The latest version of std::auto_ptr was not using
+        // the mutable owner flag and ownership was transferred with the value,
+        // but in result this type was no longer copyable. We need a copyable
+        // type here because we need to satisfy the requirements of copyable for
+        // std::vector, which does copying in case when it needs to reallocate
+        // the internal buffer. We still AVOID this by calling reserve() on the
+        // vector, but for security reasons the copying definition better stays
+        // this way.
+        //
+        // NOTE that a better alternative can be provided for C++11 where the move
+        // semantics can be used.
         UnitPtr(const UnitPtr& victim)
         {
             ptr = victim.ptr;
-            owns = false;
+            owns = victim.owns;
+            victim.owns = false;
         }
+
+        // Needed for assertion
+        bool operator==(const UnitPtr& other) const { return ptr == other.ptr; }
+        bool operator!=(const UnitPtr& other) const { return ptr != other.ptr; }
+
+        bool operator==(const Unit* other) const { return ptr == other; }
+        bool operator!=(const Unit* other) const { return ptr != other; }
+
+        // Use in condition
+        operator bool() const { return ptr; }
+        bool operator !() const { return !ptr; }
+
+        Unit* get() { return ptr; }
+        const Unit* get() const { return ptr; }
     };
 
     typedef std::vector<UnitPtr> UnitContainer;
@@ -217,6 +236,12 @@ public:
         bool retrieveFrom(CPacketUnitPool& pool)
         {
             return pool.retrieveSeries((units));
+        }
+
+        void returnUnit(UnitPtr& from)
+        {
+            units.push_back(UnitPtr());
+            from.swap(units.back());
         }
 
         Unit* viewBack()
@@ -235,6 +260,9 @@ public:
             target.swap(units.back());
             units.pop_back();
         }
+
+        // For debug only
+        ~UnitSeries();
     };
 
     static void allocateOneSeries(UnitContainer& series, size_t series_size, size_t unit_size);
@@ -257,12 +285,43 @@ private:
 
 public:
 
-    CPacketUnitPool(size_t unitsize, size_t series_size):
+    // Parameter order is consistent with those of CUnitQueue.
+    // series_size: the size of the series (amortization size)
+    // unit_size: size of every packet unit
+    CPacketUnitPool(size_t series_size, size_t unitsize):
         m_zUnitSize(unitsize),
         m_zSeriesSize(series_size),
         m_zMaxMemory(unitsize * series_size)
     {
+        m_RecycledUnits.reserve(series_size);
     }
+
+    // XXX Remove this shit after tests are rewritten.
+    // This is only to cover tests, but the old CUnitQueue type
+    // was using the method of "lending" packets to the receiver buffer,
+    // so size() = capacity() - lent_size.
+    // CPacketUnitPool doesn't use lending - instead it passes ownership
+    // to the other object by swapping, and since then it's that object
+    // responsible for it - it may delete it, but it may also return the
+    // decommissioned packet to the pool through the condenser.
+
+    // At best we can trace how many packets we potentially have and how
+    // many we have shipped - the problem is though that the receiver buffer
+    // is not obliged to return packets through the conderser, hence once
+    // shipped packets may never return. There would have to be some mechanism
+    // to track, which socket (or group) has received packets into their receiver
+    // buffer and have a function to declare "disappearing" particular buffer
+    // owner so that all packets shipped to it are identified. Otherwise we won't
+    // have consistency of these data. Unlikly to be worth a shot to keep it.
+
+    int capacity() const { return int(m_zSeriesSize * m_Series.size()); }
+    int size() const { return capacity() - m_ShippedStats; }
+    sync::atomic<int> m_ShippedStats;
+
+    // Declare shipped a single unit. Called when one series is extracted
+    // into the queue.
+    void declareShipped();
+    void declareForgotten(int number_packets);
 
     void setMaxBytes(size_t max)
     {
@@ -295,10 +354,6 @@ protected:
         size_t unit_size = m_zUnitSize + sizeof (Unit);
         return nseries * m_zSeriesSize * unit_size;
     }
-
-    SRT_TSA_NEEDS_LOCKED(m_LowerLock)
-    SRT_TSA_NEEDS_NONLOCKED(m_UpperLock)
-    void updateSeries();
 };
 
 #endif
@@ -699,8 +754,9 @@ private:
 
 #if USE_RECEIVER_UNIT_POOL
     bool refillUnits();
-    bool retrieveUnit(CPacketUnitPool::UnitPtr& to);
+    bool retrieveUnit(CPacketUnitPool::UnitPtr& to, bool checked = false);
     CPacketUnitPool::Unit* viewUnit();
+    friend class PacketFilterCollector;
 #endif
 
 private:
@@ -719,7 +775,7 @@ private:
 #endif
     CChannel*     m_pChannel;   // UDP channel for receiving packets
 
-    size_t m_szPayloadSize;     // packet payload size
+    size_t m_zPayloadSize;     // packet payload size
 
     sync::atomic<bool> m_bClosing; // closing the worker
 #if HVU_ENABLE_LOGGING
@@ -881,6 +937,8 @@ public:
     bool deleteSocket(SRTSOCKET id);
     bool setConnected(SRTSOCKET id);
     bool setBroken(SRTSOCKET id);
+
+    void forgetReceiverUnits(size_t size);
 
     SRT_TSA_NEEDS_LOCKED(m_SocketsLock)
     bool setBrokenInternal(SRTSOCKET id);

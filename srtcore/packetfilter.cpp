@@ -304,6 +304,7 @@ bool PacketFilter::packControlPacket(int32_t seq, int kflg, CPacket& w_packet)
     return true;
 }
 
+/*
 
 void PacketFilter::InsertRebuilt(vector<CUnit*>& incoming, CUnitQueue* uq)
 {
@@ -339,6 +340,7 @@ void PacketFilter::InsertRebuilt(vector<CUnit*>& incoming, CUnitQueue* uq)
 
     m_provided.clear();
 }
+*/
 
 void PacketFilter::CopyRebuilt(CallbackHolder<copy_rebuilt_fn, void*> handler)
 {
@@ -377,7 +379,7 @@ PacketFilter::Internal::Internal()
     m_builtin_filters.insert("fec");
 }
 
-bool PacketFilter::configure(CUDT* parent, CUnitQueue* uq, const std::string& confstr)
+bool PacketFilter::configure(CUDT* parent, const std::string& confstr)
 {
     m_parent = parent;
 
@@ -409,7 +411,6 @@ bool PacketFilter::configure(CUDT* parent, CUnitQueue* uq, const std::string& co
     if (!m_filter)
         return false;
 
-    m_unitq = uq;
 
     // The filter should have pinned in all events
     // that are of its interest. It's stated that

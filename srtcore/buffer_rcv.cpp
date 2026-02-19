@@ -103,15 +103,29 @@ void CRcvBuffer::checkInitial()
     SRT_ASSERT(m_entries.size() < size_t(std::numeric_limits<int>::max())); // All position pointers are integers
 }
 
-void CRcvBuffer::clear()
+std::pair<int, int> CRcvBuffer::clear()
 {
     SeqNo new_seq = m_iStartSeqNo + m_iMaxPosOff;
     // Can be optimized by only iterating m_iMaxPosOff from m_iStartPos.
+    int ncleared = 0;
+    int nleft = 0;
     for (FixedArray<Entry>::iterator it = m_entries.begin(); it != m_entries.end(); ++it)
     {
-        releaseUnit(*it);
+        bool filled = it->status != EntryState_Empty;
+        if (releaseUnit(*it))
+        {
+            ++ncleared;
+        }
+        else if (filled)
+        {
+            ++nleft;
+        }
     }
     m_iStartSeqNo = new_seq;
+
+    HLOGC(brlog.Debug, log << "CRcvBuffer: CLEAR: removed=" << ncleared << " left=" << nleft << " units");
+
+    return std::make_pair(ncleared, nleft);
 }
 
 CRcvBuffer::~CRcvBuffer()
@@ -193,6 +207,7 @@ CRcvBuffer::InsertInfo CRcvBuffer::insert(UnitHandle& unit, int muxid)
     acquireUnitAt(newpktpos, (unit)); // moving
     m_entries[newpktpos].muxID = muxid;
     countBytes(1, (int)packet.getLength());
+    HLOGC(qrlog.Debug, log << "CRcvQueue: PACKET ACQUIRED by the buffer, total " << m_iPktsCount);
 
     // Set to a value, if due to insertion there was added
     // a packet that is earlier to be retrieved than the earliest
@@ -1150,12 +1165,18 @@ void CRcvBuffer::releaseUnitAt(CPos pos)
     releaseUnit(m_entries[pos]);
 }
 
-void CRcvBuffer::releaseUnit(Entry& u)
+bool CRcvBuffer::releaseUnit(Entry& u)
 {
+    bool condensed = false;
     if (u.pUnit)
-        m_pCondenser->condense( (u.pUnit) );
+    {
+        // Report -1 because the number of packets will be decreased right after returning from this function.
+        HLOGC(qrlog.Debug, log << "CRcvQueue: PACKET RELEASED by the buffer, total " << (m_iPktsCount - 1));
+        condensed = m_pCondenser->condense( (u.pUnit) );
+    }
     u.status = EntryState_Empty;
     u.muxID = -1;
+    return condensed;
 }
 
 bool CRcvBuffer::dropUnitInPos(CPos pos)
@@ -1736,7 +1757,7 @@ CRcvBuffer::SingleCondenser::SingleCondenser(CRcvBuffer::UnitQueue* m)
     muxers_pool = m;
 }
 
-void CRcvBuffer::SingleCondenser::condense(CRcvBuffer::UnitHandle& w_u)
+bool CRcvBuffer::SingleCondenser::condense(CRcvBuffer::UnitHandle& w_u)
 {
 #if USE_RECEIVER_UNIT_POOL
     muxers_pool->returnUnit( (w_u) );
@@ -1744,12 +1765,14 @@ void CRcvBuffer::SingleCondenser::condense(CRcvBuffer::UnitHandle& w_u)
     muxers_pool->makeUnitFree(w_u);
     w_u = NULL;
 #endif
+    return true; // SingleCondenser will always succeed to return unit
 }
 
 void CRcvBuffer::SingleCondenser::acquire(CRcvBuffer::UnitHandle& w_u)
 {
 #if USE_RECEIVER_UNIT_POOL
     // Nothing to do; the unit is taken over ownership
+    (void)w_u;
 #else
     muxers_pool->makeUnitTaken(w_u);
 #endif

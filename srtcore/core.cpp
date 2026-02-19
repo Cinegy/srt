@@ -5779,7 +5779,8 @@ void * CUDT::tsbpd(void* param)
             THREAD_PAUSED();
             bWokeUpOnSignal = tsbpd_cc.wait_until(tsNextDelivery);
             THREAD_RESUMED();
-            HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: WAKE UP on " << (bWokeUpOnSignal? "SIGNAL" : "TIMEOUIT") << "!!!");
+            HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: WAKE UP on " << (bWokeUpOnSignal? "SIGNAL" : "TIMEOUT")
+                    << ". NOW=" << FormatTime(steady_clock::now()));
         }
         else
         {
@@ -5799,11 +5800,8 @@ void * CUDT::tsbpd(void* param)
             THREAD_PAUSED();
             tsbpd_cc.wait();
             THREAD_RESUMED();
+            HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: WAKE UP on ACK (signal only). NOW=" << FormatTime(steady_clock::now()));
         }
-
-        HLOGC(tslog.Debug,
-              log << self->CONID() << "tsbpd: WAKE UP [" << (bWokeUpOnSignal ? "signal" : "timeout") << "]!!! - "
-                  << "NOW=" << FormatTime(steady_clock::now()));
     }
     THREAD_EXIT();
     HLOGC(tslog.Debug, log << self->CONID() << "tsbpd: EXITING");
@@ -6337,7 +6335,7 @@ SRT_REJECT_REASON CUDT::setupCC()
         {
             // The filter configurer is build the way that allows to quit immediately
             // exit by exception, but the exception is meant for the filter only.
-            status = m_PacketFilter.configure(this, m_pMuxer->getBufferQueue(), m_config.sPacketFilterConfig.str());
+            status = m_PacketFilter.configure(this, m_config.sPacketFilterConfig.str());
         }
         catch (CUDTException& )
         {
@@ -10991,13 +10989,23 @@ struct PacketFilterCollector
 {
     CRcvQueue* extractor;
     vector<CPacketUnitPool::UnitPtr> units;
+
+    bool retrieveUnit(CPacketUnitPool::UnitPtr& to)
+    {
+        return extractor->retrieveUnit((to));
+    }
+    CPacketUnitPool::Unit* viewUnit()
+    {
+        return extractor->viewUnit();
+    }
 };
 
+// This is a static method in CRcvQueue prepared as a callback for PacketFilter::provide()
 static bool collectFilterPacket(void* vthat, const char* header, const char* data, size_t datasize)
 {
     PacketFilterCollector* col = (PacketFilterCollector*)vthat;
 
-    CPacketUnitPool::Unit* u = col->extractor->viewUnit();
+    CPacketUnitPool::Unit* u = col->viewUnit();
     if (!u)
         return false; // drop this and all remaining
     CPacket& packet = u->m_Packet;
@@ -11009,7 +11017,7 @@ static bool collectFilterPacket(void* vthat, const char* header, const char* dat
     col->units.push_back(CPacketUnitPool::UnitPtr());
 
     // Transfer ownership to this vector
-    col->extractor->retrieveUnit( (col->units.back()) );
+    col->retrieveUnit( (col->units.back()) );
     return true;
 }
 #else
@@ -11037,6 +11045,15 @@ static bool collectFilterPacket(void* vthat, const char* header, const char* dat
     return true;
 }
 #endif
+
+inline static size_t countAcquiredUnits(const std::vector<CRcvBuffer::UnitHandle>& v)
+{
+    size_t n = 0;
+    for (std::vector<CRcvBuffer::UnitHandle>::const_iterator i = v.begin(); i != v.end(); ++i)
+        if (!*i)
+            ++n;
+    return n;
+}
 
 struct SortBySequence
 {
@@ -11244,7 +11261,7 @@ int CUDT::processData(CUnit* in_unit, CRcvQueue* provider)
             // Recollect also this packet (if not, it was a FEC control packet)
 #if USE_RECEIVER_UNIT_POOL
             collector.units.push_back(CPacketUnitPool::UnitPtr());
-            source->popBackTo( (collector.units.back()) );
+            source.popBackTo( (collector.units.back()) );
 #else
             collector.units.push_back(in_unit);
 #endif
@@ -11263,7 +11280,7 @@ int CUDT::processData(CUnit* in_unit, CRcvQueue* provider)
     {
 #if USE_RECEIVER_UNIT_POOL
         collector.units.push_back(CPacketUnitPool::UnitPtr());
-        source->popBackTo( (collector.units.back()) );
+        source.popBackTo( (collector.units.back()) );
 #else
         // Stuff in just one packet that has come in.
         collector.units.push_back(in_unit);
@@ -11295,6 +11312,21 @@ int CUDT::processData(CUnit* in_unit, CRcvQueue* provider)
 
             return -1;
         }
+#if USE_RECEIVER_UNIT_POOL
+        HLOGC(qrlog.Debug, log << CONID() << "processData: handled " << collector.units.size()
+                << " units, acquired " << countAcquiredUnits(collector.units));
+
+        // Packets that were acquired are NULL unit pointers. Others would be
+        // deleted by the collector, so let's then pass these units back to the source.
+        // This is just optimization to avoid later unnecessary allocations.
+        for (std::vector<CRcvBuffer::UnitHandle>::iterator i = collector.units.begin(); i != collector.units.end(); ++i)
+        {
+            if (*i)
+            {
+                source.returnUnit(*i);
+            }
+        }
+#endif
 
         if (res == -1)
         {
