@@ -232,10 +232,9 @@ bool CPacketUnitPool::retrieveSeries(UnitContainer& series)
     // Will be replaced by the existing series, if found
     if (m_Series.empty())
     {
-        if (limitsExceeded())
+        if (m_Series.size() >= MAX_SERIES_ALLOWED)
         {
-            HLOGC(qrlog.Debug, log << "CPacketUnitPool: retrieval denied: SIZE LIMIT " << m_zMaxMemory << " EXCEEDED: "
-                    << occupiedMemory() << " from " << m_Series.size() << "S * " << m_zUnitSize << "U");
+            HLOGC(qrlog.Debug, log << "CPacketUnitPool: retrieval denied: maximum of " << (+MAX_SERIES_ALLOWED) << " allowed");
             return false;
         }
         size_t series_size = m_zSeriesSize;
@@ -299,9 +298,6 @@ void CPacketUnitPool::updateLimits()
 {
     // Roughly calculate the memory occupied by
     // existing series.
-    ScopedLock lk (m_UpperLock);
-    size_t max_units = m_zMaxMemory / m_zUnitSize;
-    size_t max_series = (max_units + m_zUnitSize - 1) / m_zSeriesSize;
 
     // Calculate how many series we are allowed to have
     // NOTE: it is not allowed to have the size less than 3 series.
@@ -310,11 +306,12 @@ void CPacketUnitPool::updateLimits()
     // (a hiccup means that the unit series will be denied and multiplexer
     // will have to read and discard the packet), and one being reclaimed
     // from the receiver buffer.
-    size_t max_remain_series = std::max(max_series, +MIN_SERIES_REQUIRED);
+    size_t max_remain_series = std::max(m_zMaxSeries.load(), +MIN_SERIES_REQUIRED);
 
+    ScopedLock lk (m_UpperLock);
     if (max_remain_series < m_Series.size())
     {
-        std::vector<UnitContainer>::iterator new_end = m_Series.begin() + max_series;
+        std::vector<UnitContainer>::iterator new_end = m_Series.begin() + m_zMaxSeries;
         m_Series.erase(new_end, m_Series.end());
     }
 }
@@ -1145,7 +1142,7 @@ void CMultiplexer::configure(int32_t id, const CSrtConfig& config, const sockadd
     // (Likely here configure the hash table for m_Sockets).
     HLOGC(smlog.Debug, log << "@" << id << ": configureMuxer: config rcv queue qsize=" << 128
             << " plsize=" << payload_size << " hsize=" << 1024);
-    m_RcvQueue.init(128, payload_size, m_pChannel);
+    m_RcvQueue.init(SRT_RCV_BUFFER_POOL_SERIES_SIZE, payload_size, m_pChannel);
 }
 
 void CMultiplexer::removeSender(CUDT* u)

@@ -984,7 +984,7 @@ TEST(CPacketUnitPool, Basic)
 
     CPacketUnitPool upool (32, 1456);
 
-    upool.setMaxBytes(1456 * 128);
+    upool.setMaxSeries(16);
 
     CPacketUnitPool::UnitSeries muxer_series;
 

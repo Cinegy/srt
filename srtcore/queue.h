@@ -65,6 +65,15 @@ modified by
 
 #define USE_RECEIVER_UNIT_POOL 1
 
+// May change this setting on demand
+#ifndef SRT_RCV_BUFFER_POOL_MAX_SERIES
+#define SRT_RCV_BUFFER_POOL_MAX_SERIES 3
+#endif
+
+#ifndef SRT_RCV_BUFFER_POOL_SERIES_SIZE
+#define SRT_RCV_BUFFER_POOL_SERIES_SIZE 128
+#endif
+
 namespace srt
 {
 class CChannel;
@@ -146,7 +155,8 @@ class CPacketUnitPool
 {
 public:
 
-    static const size_t MIN_SERIES_REQUIRED = 3;
+    static const size_t MIN_SERIES_REQUIRED = 1,
+                        MAX_SERIES_ALLOWED = SRT_RCV_BUFFER_POOL_MAX_SERIES;
 
     struct Unit
     {
@@ -281,7 +291,7 @@ private:
     size_t m_zUnitSize;
     size_t m_zSeriesSize;
 
-    sync::atomic<size_t> m_zMaxMemory;
+    sync::atomic<size_t> m_zMaxSeries;
 
 public:
 
@@ -291,9 +301,15 @@ public:
     CPacketUnitPool(size_t series_size, size_t unitsize):
         m_zUnitSize(unitsize),
         m_zSeriesSize(series_size),
-        m_zMaxMemory(unitsize * series_size)
+        m_zMaxSeries(MAX_SERIES_ALLOWED) // default, changeable
     {
         m_RecycledUnits.reserve(series_size);
+    }
+
+    void setMaxSeries(size_t max)
+    {
+        m_zMaxSeries = max;
+        updateLimits();
     }
 
     // XXX Remove this shit after tests are rewritten.
@@ -323,12 +339,6 @@ public:
     void declareShipped();
     void declareForgotten(int number_packets);
 
-    void setMaxBytes(size_t max)
-    {
-        m_zMaxMemory = max;
-        updateLimits();
-    }
-
     void updateLimits();
 
     // To be called by Multiplexer's reader to get fresh units
@@ -338,22 +348,6 @@ public:
     // The receiver buffer has revoked that entry and wants
     // to delete it (or give it back to the pool).
     void returnUnit(UnitPtr& returned_entry);
-
-protected:
-
-    SRT_TSA_NEEDS_LOCKED(m_UpperLock)
-    bool limitsExceeded()
-    {
-        return m_zMaxMemory && occupiedMemory() >= m_zMaxMemory;
-    }
-
-    SRT_TSA_NEEDS_LOCKED(m_UpperLock)
-    size_t occupiedMemory() const
-    {
-        size_t nseries = m_Series.size();
-        size_t unit_size = m_zUnitSize + sizeof (Unit);
-        return nseries * m_zSeriesSize * unit_size;
-    }
 };
 
 #endif
